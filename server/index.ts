@@ -11,10 +11,16 @@ import { join, normalize } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { PokemonSet } from '@pkmn/sim';
 import { BattleController, type SideID } from '../src/game/battle';
+import { chooseCpuMove } from '../src/game/ai';
 import { teamBanViolation } from '../src/data/bans';
 import type { BattleStateMsg, ClientMsg, ServerMsg } from '../src/net/protocol';
 
 const PORT = Number(process.env.PORT ?? 8080);
+
+// Turn clock: a hidden window, then a visible warning countdown, then auto-pick.
+const HIDDEN_MS = 60_000; // secret 60s
+const WARN_SECONDS = 45; // visible 45s warning
+const WARN_MS = WARN_SECONDS * 1000;
 
 // In production this same service also serves the built game (Vite's dist/).
 const DIST = join(import.meta.dirname, '..', 'dist');
@@ -72,6 +78,8 @@ class Match {
   readonly ctrl: BattleController;
   // Choices submitted so far this turn, keyed by side.
   private choices: { p1?: string; p2?: string } = {};
+  private warnTimer?: ReturnType<typeof setTimeout>;
+  private deadlineTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     readonly p1: Client,
@@ -89,8 +97,9 @@ class Match {
     send(p1.ws, { type: 'matchFound', opponentName: p2.name, opponentWallet: p2.wallet });
     send(p2.ws, { type: 'matchFound', opponentName: p1.name, opponentWallet: p1.wallet });
 
-    // Send the opening state (turn 1 move selection) to both.
+    // Send the opening state (turn 1 move selection) to both, then start the clock.
     this.pushState(this.ctrl.drainLog());
+    this.startTimers();
   }
 
   private clientFor(side: SideID): Client {
@@ -118,23 +127,59 @@ class Match {
     }
   }
 
+  /** Sides that must act this decision point but haven't chosen yet. */
+  private pending(): SideID[] {
+    return (['p1', 'p2'] as const).filter(
+      (s) => !this.ctrl.request(s).wait && this.choices[s] == null,
+    );
+  }
+
   /** A player submitted a choice for the current turn. */
   onChoice(side: SideID, choice: string): void {
     if (this.ctrl.ended) return;
     if (this.ctrl.request(side).wait) return; // it isn't this side's turn to act
     this.choices[side] = choice;
+    if (this.pending().length === 0) this.resolveTurn(); // everyone has acted
+  }
 
-    // Figure out which sides still owe a choice; only advance when all have acted.
-    const needed = (['p1', 'p2'] as const).filter((s) => !this.ctrl.request(s).wait);
-    if (!needed.every((s) => this.choices[s] != null)) return;
-
-    // Run the turn on the server. The '' for a waiting side means "no action".
+  /** Commit the collected choices, advance the battle, and re-arm the clock. */
+  private resolveTurn(): void {
+    this.clearTimers();
     const res = this.ctrl.makeChoices(this.choices.p1 ?? '', this.choices.p2 ?? '');
     this.choices = {};
     const lines = this.ctrl.drainLog();
     if (!res.ok && res.error) lines.push(`⚠️ ${res.error}`); // bad choice -> let them retry
     this.pushState(lines);
     if (this.ctrl.ended) this.cleanup();
+    else this.startTimers(); // next decision point
+  }
+
+  // ---- Turn clock ----
+  private startTimers(): void {
+    this.clearTimers();
+    // Hidden window first; then warn whoever still owes a choice.
+    this.warnTimer = setTimeout(() => {
+      for (const side of this.pending()) {
+        send(this.clientFor(side).ws, { type: 'timerWarning', seconds: WARN_SECONDS });
+      }
+    }, HIDDEN_MS);
+    // Deadline: auto-pick for anyone who never chose, then resolve.
+    this.deadlineTimer = setTimeout(() => this.forceResolve(), HIDDEN_MS + WARN_MS);
+  }
+
+  private forceResolve(): void {
+    if (this.ctrl.ended) return;
+    for (const side of this.pending()) {
+      this.choices[side] = chooseCpuMove(this.ctrl, side); // default move / forced switch
+    }
+    this.resolveTurn();
+  }
+
+  private clearTimers(): void {
+    if (this.warnTimer) clearTimeout(this.warnTimer);
+    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    this.warnTimer = undefined;
+    this.deadlineTimer = undefined;
   }
 
   /** One player left mid-battle: the other wins by forfeit. */
@@ -145,6 +190,7 @@ class Match {
   }
 
   private cleanup(): void {
+    this.clearTimers();
     this.p1.match = undefined;
     this.p2.match = undefined;
   }

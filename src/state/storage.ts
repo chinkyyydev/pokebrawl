@@ -21,6 +21,8 @@ export interface Profile {
   createdAt: number;
   teams: SavedTeam[]; // length TEAM_SLOTS
   activeTeam: number; // index into teams
+  wins: number; // online (PvP) wins
+  losses: number; // online (PvP) losses
 }
 
 const KEY = 'pokemon1v1:profile';
@@ -37,7 +39,15 @@ export function emptyTeams(): SavedTeam[] {
 }
 
 export function createProfile(name: string, trainer: string): Profile {
-  return { name, trainer, createdAt: Date.now(), teams: emptyTeams(), activeTeam: 0 };
+  return {
+    name,
+    trainer,
+    createdAt: Date.now(),
+    teams: emptyTeams(),
+    activeTeam: 0,
+    wins: 0,
+    losses: 0,
+  };
 }
 
 export function loadProfile(): Profile | null {
@@ -57,6 +67,8 @@ export function loadProfile(): Profile | null {
     });
     if (typeof p.activeTeam !== 'number') p.activeTeam = 0;
     if (!p.trainer || !TRAINERS.some((t) => t.id === p.trainer)) p.trainer = DEFAULT_TRAINER;
+    if (typeof p.wins !== 'number') p.wins = 0;
+    if (typeof p.losses !== 'number') p.losses = 0;
     return p;
   } catch {
     return null;

@@ -32,5 +32,7 @@ export type ServerMsg =
   | { type: 'queued'; stake: number; players: number }
   | { type: 'matchFound'; opponentName: string; opponentWallet: string }
   | BattleStateMsg
+  // The hidden turn timer expired; show a visible `seconds` countdown warning.
+  | { type: 'timerWarning'; seconds: number }
   | { type: 'opponentLeft' }
   | { type: 'error'; message: string };

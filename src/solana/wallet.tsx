@@ -44,12 +44,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const p = getProvider();
     if (!p) return;
 
-    // Reconnect silently if the user already approved this site before.
-    p.connect({ onlyIfTrusted: true }).then(
-      (res) => setAddress(res.publicKey.toString()),
-      () => {},
-    );
-
+    // We intentionally do NOT auto-connect on load — Phantom is only ever
+    // contacted when the user explicitly clicks "Connect". We just listen so
+    // the UI stays in sync if they connect/disconnect/switch accounts.
     const sync = () => {
       const pk = getProvider()?.publicKey;
       setAddress(pk ? pk.toString() : null);

@@ -35,14 +35,55 @@ function setsFrom(members: Team): PokemonSet[] {
     .map(toPokemonSet);
 }
 
+const SCENE_KEY = 'pokemon1v1:scene';
+
+// Restore the last navigation scene on refresh. Battle/online scenes can't be
+// resumed (their state lives on the server / in memory), so they fall back to town.
+function restoreScene(profile: Profile | null): Scene {
+  if (!profile) return { name: 'title' };
+  try {
+    const raw = localStorage.getItem(SCENE_KEY);
+    if (raw) {
+      const s = JSON.parse(raw) as Scene;
+      if (s.name === 'town' || s.name === 'research' || s.name === 'lobby') return s;
+      if (
+        s.name === 'builder' &&
+        typeof s.teamIndex === 'number' &&
+        s.teamIndex >= 0 &&
+        s.teamIndex < profile.teams.length
+      ) {
+        return s;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { name: 'town' };
+}
+
 export default function App() {
   const [profile, setProfile] = useState<Profile | null>(() => loadProfile());
-  const [scene, setScene] = useState<Scene>({ name: 'title' });
+  const [scene, setScene] = useState<Scene>(() => restoreScene(profile));
 
   // Persist on every profile change. Swap this for wallet/backend later.
   useEffect(() => {
     if (profile) saveProfile(profile);
   }, [profile]);
+
+  // Remember where the player is so a refresh resumes here (not the title).
+  useEffect(() => {
+    const persist: Scene =
+      scene.name === 'builder'
+        ? { name: 'builder', teamIndex: scene.teamIndex }
+        : scene.name === 'research' || scene.name === 'lobby' || scene.name === 'town'
+          ? { name: scene.name }
+          : { name: 'town' }; // battle/online/loading/title/create -> town on refresh
+    try {
+      localStorage.setItem(SCENE_KEY, JSON.stringify(persist));
+    } catch {
+      /* ignore */
+    }
+  }, [scene]);
 
   function updateTeamMembers(index: number, members: Team) {
     setProfile((p) =>
@@ -63,6 +104,13 @@ export default function App() {
     const player = setsFrom(members);
     const cpu = (await randomTeam(player.length || undefined)).map(toPokemonSet);
     setScene({ name: 'battle', stake, player, cpu });
+  }
+
+  // Record an online (PvP) match result onto the profile's W/L.
+  function recordResult(won: boolean) {
+    setProfile((p) =>
+      p ? { ...p, wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1) } : p,
+    );
   }
 
   return (
@@ -158,6 +206,7 @@ export default function App() {
             name={profile.name}
             stake={scene.stake}
             members={scene.members}
+            onResult={recordResult}
             onExit={() => setScene({ name: 'town' })}
           />
         );

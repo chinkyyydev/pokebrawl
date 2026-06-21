@@ -1,4 +1,9 @@
+import { useWallet } from '../solana/wallet';
+import { WalletButton } from './WalletButton';
+
 export function TitleScreen({ onStart }: { onStart: () => void }) {
+  const { address } = useWallet();
+
   return (
     <div className="scene title-scene">
       <div className="title-logo">
@@ -6,10 +11,22 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
         <span className="title-logo-sub">1 v 1</span>
       </div>
       <div className="title-tag">SOLANA BATTLE STADIUM</div>
-      <button className="press-start" onClick={onStart}>
-        ▶ PRESS START
-      </button>
-      <p className="title-foot">devnet build · wager mode</p>
+
+      <div className="title-actions">
+        {/* Free path: jump straight in — no wallet needed. */}
+        <button className="press-start" onClick={onStart}>
+          {address ? '▶ ENTER STADIUM' : '▶ PLAY FREE'}
+        </button>
+
+        <div className="title-or">— or connect to wager SOL —</div>
+
+        {/* Wallet path: only ever talks to Phantom when this is clicked. */}
+        <WalletButton />
+      </div>
+
+      <p className="title-foot">
+        Free vs CPU &amp; real trainers · connect a wallet to wager · devnet
+      </p>
     </div>
   );
 }

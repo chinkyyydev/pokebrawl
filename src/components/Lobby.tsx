@@ -4,7 +4,6 @@ import { teamIsReady, teamCount } from '../state/storage';
 import { monSprite } from '../data/sprites';
 import type { Team } from '../types';
 import { DialogBox } from './DialogBox';
-import { WalletButton } from './WalletButton';
 import { useWallet } from '../solana/wallet';
 
 const STAKE_TIERS = [0.1, 0.5, 1, 5, 10];
@@ -27,7 +26,7 @@ export function Lobby({
     : readyIdx[0]?.i ?? 0;
   const [picked, setPicked] = useState(defaultIdx);
   const [mode, setMode] = useState<'online' | 'practice'>('online');
-  const { address } = useWallet();
+  const { address, connect } = useWallet();
   const isOnline = mode === 'online';
   // Free play (stake 0) and practice need no wallet; only real SOL wagers do.
   const canWager = !!address;
@@ -84,23 +83,18 @@ export function Lobby({
               <span className="tier-vs">vs real trainer</span>
               <span className="tier-pot muted">just for fun</span>
             </button>
-            {STAKE_TIERS.map((s) => {
-              const locked = !canWager;
-              return (
-                <button key={s} className="tier" disabled={locked} onClick={() => start(s)}>
-                  <span className="tier-amount">{s} SOL</span>
-                  <span className="tier-vs">vs {s} SOL</span>
-                  <span className="tier-pot muted">{locked ? '🔒 wallet' : `pot ${s * 2}`}</span>
-                </button>
-              );
-            })}
+            {STAKE_TIERS.map((s) => (
+              <button
+                key={s}
+                className="tier"
+                onClick={() => (canWager ? start(s) : connect())}
+              >
+                <span className="tier-amount">{s} SOL</span>
+                <span className="tier-vs">vs {s} SOL</span>
+                <span className="tier-pot muted">{canWager ? `pot ${s * 2}` : '🔒 connect'}</span>
+              </button>
+            ))}
           </div>
-          {!canWager && (
-            <div className="wallet-gate">
-              <p>🔒 Connect a Solana wallet to wager SOL — or play FREE above.</p>
-              <WalletButton />
-            </div>
-          )}
         </>
       ) : (
         // Practice is always free vs CPU — no wallet, no stake.

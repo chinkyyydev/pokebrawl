@@ -74,6 +74,34 @@ h3 {
   color: var(--muted);
   font-size: 0.95em;
 }
+.ban-tag {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.4rem;
+  background: var(--red);
+  color: #fff;
+  padding: 2px 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+.picker-row.banned {
+  opacity: 0.5;
+}
+.turn-timer {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.7rem;
+  text-align: center;
+  padding: 10px;
+  background: #3a2a10;
+  border: 3px solid var(--gold);
+  color: var(--gold);
+}
+.turn-timer.urgent {
+  background: #3a1414;
+  border-color: var(--red);
+  color: var(--red);
+  animation: blink 0.8s steps(2, start) infinite;
+}
 
 /* ---------- Buttons / inputs ---------- */
 button {
@@ -176,6 +204,16 @@ select {
   }
 }
 .title-foot {
+  color: var(--muted);
+}
+.title-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.title-or {
+  font-size: 0.7rem;
   color: var(--muted);
 }
 
@@ -386,6 +424,26 @@ select {
 }
 .trainer-card-right {
   margin-left: auto;
+  text-align: right;
+}
+.record {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.7rem;
+}
+.record-w {
+  color: var(--green);
+}
+.record-l {
+  color: var(--red);
+}
+.record-sep {
+  color: var(--muted);
+  margin: 0 5px;
+}
+.record-ratio {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 4px;
 }
 .wallet-btn {
   font-size: 15px;
@@ -973,3 +1031,77 @@ select {
 .type-dark { background: #5a5366; }
 .type-steel { background: #5a8ea2; }
 .type-fairy { background: #ec8fe6; color: #222; }
+
+/* ---------- Mobile ---------- */
+@media (max-width: 720px) {
+  html,
+  body {
+    font-size: 18px;
+  }
+  .game-frame {
+    padding: 6px;
+  }
+  .screen {
+    padding: 10px;
+    border-width: 3px;
+    min-height: 0;
+  }
+
+  /* Stack the two-column builders/creators */
+  .builder,
+  .creator {
+    grid-template-columns: 1fr;
+  }
+  .builder-slots {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .builder-slots .slot {
+    flex: 1 1 30%;
+  }
+  .builder-editor {
+    min-height: 0;
+  }
+  .creator-controls,
+  .creator-preview {
+    max-height: none;
+  }
+
+  /* One-per-row lists */
+  .locations,
+  .team-slots,
+  .lobby-teams {
+    grid-template-columns: 1fr;
+  }
+  .editor-grid,
+  .move-grid {
+    grid-template-columns: 1fr;
+  }
+  .tiers {
+    grid-template-columns: 1fr 1fr;
+  }
+  .picker-list {
+    max-height: 50vh;
+  }
+
+  /* Battle screen fits a phone */
+  .battle-sprite {
+    width: 84px;
+    height: 84px;
+  }
+  .move-row {
+    grid-template-columns: 1fr;
+  }
+  .mode-toggle {
+    flex-direction: column;
+  }
+  .title-logo {
+    font-size: 1.6rem;
+  }
+  .trainer-card {
+    flex-wrap: wrap;
+  }
+  .log {
+    height: 130px;
+  }
+}

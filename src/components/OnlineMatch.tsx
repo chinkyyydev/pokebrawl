@@ -12,16 +12,19 @@ export function OnlineMatch({
   name,
   stake,
   members,
+  onResult,
   onExit,
 }: {
   name: string;
   stake: number;
   members: Team;
+  onResult?: (won: boolean) => void;
   onExit: () => void;
 }) {
   const clientRef = useRef<NetClient | null>(null);
   const prevState = useRef<BattleStateMsg | null>(null);
   const fxTimer = useRef<number | undefined>(undefined);
+  const recordedRef = useRef(false); // ensure W/L is counted only once
   const logBoxRef = useRef<HTMLDivElement | null>(null);
 
   const { address } = useWallet();
@@ -32,6 +35,9 @@ export function OnlineMatch({
   const [waiting, setWaiting] = useState(false); // submitted a choice, awaiting next turn
   const [fx, setFx] = useState<{ you?: Fx; foe?: Fx }>({});
   const [endNote, setEndNote] = useState<string | null>(null);
+  const [warnEndsAt, setWarnEndsAt] = useState<number | null>(null); // visible warning deadline
+  const [nowTs, setNowTs] = useState(Date.now());
+  const warnLeft = warnEndsAt != null ? Math.max(0, Math.ceil((warnEndsAt - nowTs) / 1000)) : null;
 
   useEffect(() => {
     const team = members
@@ -55,6 +61,13 @@ export function OnlineMatch({
     logBoxRef.current?.scrollTo({ top: logBoxRef.current.scrollHeight });
   });
 
+  // Tick the visible warning countdown once it's active.
+  useEffect(() => {
+    if (warnEndsAt == null) return;
+    const id = setInterval(() => setNowTs(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [warnEndsAt]);
+
   function handleMessage(msg: ServerMsg) {
     switch (msg.type) {
       case 'queued':
@@ -67,8 +80,16 @@ export function OnlineMatch({
       case 'state':
         applyState(msg);
         break;
+      case 'timerWarning':
+        setWarnEndsAt(Date.now() + msg.seconds * 1000);
+        setNowTs(Date.now());
+        break;
       case 'opponentLeft':
         setEndNote('Your opponent left — you win by forfeit!');
+        if (!recordedRef.current) {
+          recordedRef.current = true;
+          onResult?.(true);
+        }
         break;
       case 'error':
         setEndNote(msg.message);
@@ -92,12 +113,19 @@ export function OnlineMatch({
     prevState.current = msg;
     setState(msg);
     setWaiting(false);
+    setWarnEndsAt(null); // new decision point — hide any prior warning
     if (msg.log.length) setLog((l) => [...l, ...msg.log]);
+
+    if (msg.ended && !recordedRef.current) {
+      recordedRef.current = true;
+      onResult?.(msg.winner === 'you');
+    }
   }
 
   function choose(choice: string) {
     clientRef.current?.send({ type: 'choice', choice });
     setWaiting(true);
+    setWarnEndsAt(null); // you've acted — drop the warning
   }
 
   function leave() {
@@ -173,6 +201,12 @@ export function OnlineMatch({
         />
         <Combatant who="You" mon={state.you.active} party={state.you.party} anim={fx.you} />
       </div>
+
+      {!ended && warnLeft != null && warnLeft > 0 && (
+        <div className={`turn-timer ${warnLeft <= 10 ? 'urgent' : ''}`}>
+          ⏰ {warnLeft}s to choose — or a move is picked for you!
+        </div>
+      )}
 
       <BattleControls
         req={state.request}

@@ -2,7 +2,6 @@ import type { Profile } from '../state/storage';
 import { teamIsReady } from '../state/storage';
 import { TrainerSprite } from './TrainerSprite';
 import { DialogBox } from './DialogBox';
-import { WalletButton } from './WalletButton';
 
 export function Town({
   profile,
@@ -29,7 +28,16 @@ export function Town({
           </div>
         </div>
         <div className="trainer-card-right">
-          <WalletButton />
+          <div className="record">
+            <span className="record-w">{profile.wins}W</span>
+            <span className="record-sep">·</span>
+            <span className="record-l">{profile.losses}L</span>
+          </div>
+          <div className="record-ratio">
+            {profile.wins + profile.losses > 0
+              ? `${Math.round((profile.wins / (profile.wins + profile.losses)) * 100)}% win rate`
+              : 'No matches yet'}
+          </div>
         </div>
       </div>
 
