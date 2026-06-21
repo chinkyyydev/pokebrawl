@@ -12,3 +12,6 @@ dist-ssr
 /asset-src/
 /*.mts
 /*.mjs
+
+# Claude Code local settings
+/.claude/
