@@ -141,14 +141,13 @@ export default function App() {
         );
 
       case 'loading':
-        return <div className="loading">Searching for an opponent at {scene.stake} SOL…</div>;
+        return <div className="loading">Setting up your practice battle…</div>;
 
       case 'battle':
         return (
           <BattleView
             playerTeam={scene.player}
             cpuTeam={scene.cpu}
-            stake={scene.stake}
             onExit={() => setScene({ name: 'town' })}
           />
         );

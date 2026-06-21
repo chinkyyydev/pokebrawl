@@ -4,6 +4,8 @@ import { teamIsReady, teamCount } from '../state/storage';
 import { monSprite } from '../data/sprites';
 import type { Team } from '../types';
 import { DialogBox } from './DialogBox';
+import { WalletButton } from './WalletButton';
+import { useWallet } from '../solana/wallet';
 
 const STAKE_TIERS = [0.1, 0.5, 1, 5, 10];
 
@@ -25,6 +27,10 @@ export function Lobby({
     : readyIdx[0]?.i ?? 0;
   const [picked, setPicked] = useState(defaultIdx);
   const [mode, setMode] = useState<'online' | 'practice'>('online');
+  const { address } = useWallet();
+  const isOnline = mode === 'online';
+  // Free play (stake 0) and practice need no wallet; only real SOL wagers do.
+  const canWager = !!address;
 
   const start = (stake: number) => {
     const members = profile.teams[picked].members;
@@ -35,8 +41,9 @@ export function Lobby({
   return (
     <div className="scene lobby-scene">
       <DialogBox speaker="STADIUM CLERK">
-        Choose your team and mode, then pick a stake. Online matches you against a real trainer
-        who wagered the same amount. (Devnet — no real SOL yet.)
+        Pick your team and mode. <strong>Practice</strong> is a free battle vs the CPU.
+        <strong> Online</strong> matches you against a real trainer — play FREE for fun, or wager
+        SOL against someone who staked the same. (Devnet — no real SOL yet.)
       </DialogBox>
 
       <div className="mode-toggle">
@@ -67,16 +74,44 @@ export function Lobby({
         ))}
       </div>
 
-      <h3 className="section-label">CHOOSE STAKE</h3>
-      <div className="tiers">
-        {STAKE_TIERS.map((s) => (
-          <button key={s} className="tier" onClick={() => start(s)}>
-            <span className="tier-amount">{s} SOL</span>
-            <span className="tier-vs">vs {s} SOL</span>
-            <span className="tier-pot muted">pot {s * 2}</span>
+      <h3 className="section-label">{isOnline ? 'CHOOSE STAKE' : 'PRACTICE BATTLE'}</h3>
+      {isOnline ? (
+        <>
+          <div className="tiers">
+            {/* Free PvP: matched against a real trainer, no wallet, nothing wagered. */}
+            <button className="tier tier-free" onClick={() => start(0)}>
+              <span className="tier-amount">FREE</span>
+              <span className="tier-vs">vs real trainer</span>
+              <span className="tier-pot muted">just for fun</span>
+            </button>
+            {STAKE_TIERS.map((s) => {
+              const locked = !canWager;
+              return (
+                <button key={s} className="tier" disabled={locked} onClick={() => start(s)}>
+                  <span className="tier-amount">{s} SOL</span>
+                  <span className="tier-vs">vs {s} SOL</span>
+                  <span className="tier-pot muted">{locked ? '🔒 wallet' : `pot ${s * 2}`}</span>
+                </button>
+              );
+            })}
+          </div>
+          {!canWager && (
+            <div className="wallet-gate">
+              <p>🔒 Connect a Solana wallet to wager SOL — or play FREE above.</p>
+              <WalletButton />
+            </div>
+          )}
+        </>
+      ) : (
+        // Practice is always free vs CPU — no wallet, no stake.
+        <div className="tiers">
+          <button className="tier tier-free" onClick={() => start(0)}>
+            <span className="tier-amount">FREE</span>
+            <span className="tier-vs">vs CPU</span>
+            <span className="tier-pot muted">just for fun</span>
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
       <div className="scene-foot">
         <button className="link-btn" onClick={onBack}>

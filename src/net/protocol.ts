@@ -23,14 +23,14 @@ export interface BattleStateMsg {
 }
 
 export type ClientMsg =
-  | { type: 'queue'; stake: number; name: string; team: PokemonSet[] }
+  | { type: 'queue'; stake: number; name: string; wallet: string; team: PokemonSet[] }
   | { type: 'cancel' }
   | { type: 'choice'; choice: string }
   | { type: 'leave' };
 
 export type ServerMsg =
   | { type: 'queued'; stake: number; players: number }
-  | { type: 'matchFound'; opponentName: string }
+  | { type: 'matchFound'; opponentName: string; opponentWallet: string }
   | BattleStateMsg
   | { type: 'opponentLeft' }
   | { type: 'error'; message: string };

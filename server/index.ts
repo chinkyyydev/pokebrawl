@@ -11,6 +11,7 @@ import { join, normalize } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { PokemonSet } from '@pkmn/sim';
 import { BattleController, type SideID } from '../src/game/battle';
+import { teamBanViolation } from '../src/data/bans';
 import type { BattleStateMsg, ClientMsg, ServerMsg } from '../src/net/protocol';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -53,6 +54,7 @@ interface Client {
   id: string;
   ws: WebSocket;
   name: string;
+  wallet: string; // Solana address — identity for staking/payouts
   team: PokemonSet[];
   stake: number;
   side?: SideID; // which side of the battle they are (set when matched)
@@ -84,8 +86,8 @@ class Match {
     // Build the authoritative battle from both teams.
     this.ctrl = new BattleController(p1.team, p2.team, p1.name, p2.name);
 
-    send(p1.ws, { type: 'matchFound', opponentName: p2.name });
-    send(p2.ws, { type: 'matchFound', opponentName: p1.name });
+    send(p1.ws, { type: 'matchFound', opponentName: p2.name, opponentWallet: p2.wallet });
+    send(p2.ws, { type: 'matchFound', opponentName: p1.name, opponentWallet: p1.wallet });
 
     // Send the opening state (turn 1 move selection) to both.
     this.pushState(this.ctrl.drainLog());
@@ -153,8 +155,15 @@ class Match {
 // ---------------------------------------------------------------------------
 const queues = new Map<number, Client[]>();
 
-function enqueue(client: Client, stake: number, name: string, team: PokemonSet[]): void {
+function enqueue(
+  client: Client,
+  stake: number,
+  name: string,
+  wallet: string,
+  team: PokemonSet[],
+): void {
   client.name = name.trim() || 'Trainer';
+  client.wallet = wallet;
   client.team = team;
   client.stake = stake;
 
@@ -190,7 +199,7 @@ const httpServer = createServer(async (req, res) => {
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws) => {
-  const client: Client = { id: randomUUID(), ws, name: '', team: [], stake: 0 };
+  const client: Client = { id: randomUUID(), ws, name: '', wallet: '', team: [], stake: 0 };
   console.log(`✅ Player connected — ${wss.clients.size} online`);
 
   ws.on('message', (data) => {
@@ -202,15 +211,22 @@ wss.on('connection', (ws) => {
     }
 
     switch (msg.type) {
-      case 'queue':
-        // NOTE: teams are trusted as-is for now. Before mainnet, validate team
-        // legality server-side — never trust the client with money on the line.
+      case 'queue': {
+        // Teams are validated server-side — never trust the client with money on
+        // the line. (Full legality validation — move legality, EV/IV limits — is
+        // still TODO before mainnet; this enforces the competitive ban list.)
         if (!Array.isArray(msg.team) || msg.team.length === 0) {
           send(ws, { type: 'error', message: 'You need a team to queue.' });
           return;
         }
-        enqueue(client, msg.stake, msg.name, msg.team);
+        const banned = teamBanViolation(msg.team);
+        if (banned) {
+          send(ws, { type: 'error', message: `Illegal team: ${banned}.` });
+          return;
+        }
+        enqueue(client, msg.stake, msg.name, msg.wallet ?? '', msg.team);
         break;
+      }
       case 'choice':
         if (client.side && client.match) client.match.onChoice(client.side, msg.choice);
         break;

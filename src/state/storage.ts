@@ -1,5 +1,6 @@
 import type { Team, TeamMember } from '../types';
 import { DEFAULT_TRAINER, TRAINERS } from '../data/trainers';
+import { teamBanViolation } from '../data/bans';
 
 // A trainer profile and their saved teams. Persisted to localStorage for now;
 // when wallet/account auth lands, swap the KEY for the wallet address and move
@@ -99,7 +100,7 @@ export function teamProblem(t: SavedTeam): string | null {
       return `${m.species} has duplicate moves`;
     }
   }
-  return null;
+  return teamBanViolation(mons);
 }
 
 export function teamCount(t: SavedTeam): number {

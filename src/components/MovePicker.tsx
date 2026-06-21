@@ -1,4 +1,5 @@
 import type { MoveLite } from '../data/pokedex';
+import { isMoveBanned } from '../data/bans';
 
 export function MovePicker({
   moves,
@@ -26,13 +27,15 @@ export function MovePicker({
         <option value="">— empty —</option>
         {moves.map((m) => {
           // A move already chosen in another slot is shadowed out + unselectable
-          // (but the move currently in THIS slot stays selectable).
+          // (but the move currently in THIS slot stays selectable). Banned moves
+          // are likewise unselectable.
           const used = !!taken?.has(m.name) && m.name !== value;
+          const banned = isMoveBanned(m.name);
           return (
-            <option key={m.id} value={m.name} disabled={used}>
+            <option key={m.id} value={m.name} disabled={used || banned}>
               {m.name} · {m.type} ·{' '}
               {m.category === 'Status' ? 'Status' : `${m.basePower || '—'} BP`}
-              {used ? ' — in use' : ''}
+              {banned ? ' — BANNED' : used ? ' — in use' : ''}
             </option>
           );
         })}

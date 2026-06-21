@@ -384,6 +384,29 @@ select {
   border: 3px solid var(--border);
   padding: 10px 14px;
 }
+.trainer-card-right {
+  margin-left: auto;
+}
+.wallet-btn {
+  font-size: 15px;
+  background: #2a2150;
+  border-color: #5a3aa8;
+}
+.wallet-btn.connected {
+  background: #14331f;
+  border-color: var(--green);
+  color: #9ff5b8;
+}
+.wallet-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 3px solid #5a3aa8;
+  padding: 20px;
+  text-align: center;
+}
 .trainer-pic {
   width: 64px;
   height: 64px;

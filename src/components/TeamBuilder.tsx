@@ -12,6 +12,7 @@ import { teamProblem } from '../state/storage';
 import { monSprite } from '../data/sprites';
 import { PokemonPicker } from './PokemonPicker';
 import { MovePicker } from './MovePicker';
+import { isAbilityBanned, isItemBanned } from '../data/bans';
 
 export function TeamBuilder({
   team,
@@ -140,11 +141,15 @@ export function TeamBuilder({
                   value={member.ability}
                   onChange={(e) => update({ ...member, ability: e.target.value })}
                 >
-                  {abilityList.map((a) => (
-                    <option key={a.id} value={a.name}>
-                      {a.name}
-                    </option>
-                  ))}
+                  {abilityList.map((a) => {
+                    const banned = isAbilityBanned(a.name);
+                    return (
+                      <option key={a.id} value={a.name} disabled={banned}>
+                        {a.name}
+                        {banned ? ' — BANNED' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
                 {currentAbility && (
                   <p className="desc">{currentAbility.shortDesc || 'No description available.'}</p>
@@ -173,11 +178,15 @@ export function TeamBuilder({
                   onChange={(e) => update({ ...member, item: e.target.value })}
                 >
                   <option value="">— none —</option>
-                  {items.map((it) => (
-                    <option key={it.id} value={it.name}>
-                      {it.name}
-                    </option>
-                  ))}
+                  {items.map((it) => {
+                    const banned = isItemBanned(it.name);
+                    return (
+                      <option key={it.id} value={it.name} disabled={banned}>
+                        {it.name}
+                        {banned ? ' — BANNED' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
                 {currentItem ? (
                   <p className="desc">{currentItem.shortDesc || 'No description available.'}</p>

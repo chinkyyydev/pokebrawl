@@ -2,6 +2,7 @@ import type { Profile } from '../state/storage';
 import { teamIsReady } from '../state/storage';
 import { TrainerSprite } from './TrainerSprite';
 import { DialogBox } from './DialogBox';
+import { WalletButton } from './WalletButton';
 
 export function Town({
   profile,
@@ -26,6 +27,9 @@ export function Town({
           <div className="trainer-sub">
             Active: {active?.name ?? '—'} {ready ? '✓' : '(not ready)'}
           </div>
+        </div>
+        <div className="trainer-card-right">
+          <WalletButton />
         </div>
       </div>
 

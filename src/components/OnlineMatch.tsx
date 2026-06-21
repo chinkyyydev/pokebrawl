@@ -4,6 +4,7 @@ import { NetClient, WS_URL } from '../net/client';
 import type { BattleStateMsg, ServerMsg } from '../net/protocol';
 import { Combatant, BattleControls, type Fx } from './BattleField';
 import { DialogBox } from './DialogBox';
+import { useWallet } from '../solana/wallet';
 
 type Phase = 'connecting' | 'queued' | 'battle' | 'error';
 
@@ -23,6 +24,7 @@ export function OnlineMatch({
   const fxTimer = useRef<number | undefined>(undefined);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
 
+  const { address } = useWallet();
   const [phase, setPhase] = useState<Phase>('connecting');
   const [opponent, setOpponent] = useState('');
   const [state, setState] = useState<BattleStateMsg | null>(null);
@@ -38,7 +40,7 @@ export function OnlineMatch({
 
     const client = new NetClient(WS_URL, {
       onOpen: () => {
-        client.send({ type: 'queue', stake, name, team });
+        client.send({ type: 'queue', stake, name, wallet: address ?? '', team });
         setPhase('queued');
       },
       onMessage: handleMessage,
@@ -131,8 +133,10 @@ export function OnlineMatch({
     return (
       <div className="scene online-scene">
         <DialogBox speaker="STADIUM CLERK">
-          Searching for an opponent at {stake} SOL… (tip: open a second browser tab to face
-          yourself!)
+          {stake === 0
+            ? 'Searching for a trainer to play for fun… '
+            : `Searching for an opponent at ${stake} SOL… `}
+          (tip: open a second browser tab to face yourself!)
         </DialogBox>
         <div className="searching">🔍 Matchmaking…</div>
         <button
@@ -154,7 +158,7 @@ export function OnlineMatch({
     <div className="battle">
       <div className="battle-top">
         <div className="stake-pill">
-          {stake} SOL · vs {opponent || 'opponent'}
+          {stake === 0 ? 'Free play' : `${stake} SOL`} · vs {opponent || 'opponent'}
         </div>
         <button onClick={leave}>Forfeit / Exit</button>
       </div>
@@ -177,9 +181,11 @@ export function OnlineMatch({
         resultTitle={ended ? (won ? '🏆 You won!' : 'You lost.') : ''}
         resultNote={
           endNote ??
-          (won
-            ? `(Payout of ~${stake * 2} SOL would settle here once Solana escrow is wired up.)`
-            : `(Your ${stake} SOL stake would go to the opponent here.)`)
+          (stake === 0
+            ? 'Free play — nothing wagered. GG!'
+            : won
+              ? `(Payout of ~${stake * 2} SOL would settle here once Solana escrow is wired up.)`
+              : `(Your ${stake} SOL stake would go to the opponent here.)`)
         }
         onChoose={choose}
         onExit={onExit}

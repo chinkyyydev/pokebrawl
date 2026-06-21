@@ -7,12 +7,10 @@ import { Combatant, BattleControls, type Fx } from './BattleField';
 export function BattleView({
   playerTeam,
   cpuTeam,
-  stake,
   onExit,
 }: {
   playerTeam: PokemonSet[];
   cpuTeam: PokemonSet[];
-  stake: number;
   onExit: () => void;
 }) {
   const ctrlRef = useRef<BattleController | null>(null);
@@ -73,7 +71,7 @@ export function BattleView({
   return (
     <div className="battle">
       <div className="battle-top">
-        <div className="stake-pill">Practice · {stake} SOL (mock)</div>
+        <div className="stake-pill">Practice · vs CPU · free</div>
         <button onClick={onExit}>Forfeit / Exit</button>
       </div>
 
@@ -86,11 +84,7 @@ export function BattleView({
         req={req}
         ended={ctrl.ended}
         resultTitle={won ? '🏆 You won!' : 'You lost.'}
-        resultNote={
-          won
-            ? `(Payout of ~${stake * 2} SOL would settle here once Solana escrow is wired up.)`
-            : `(Your ${stake} SOL stake would go to the opponent here.)`
-        }
+        resultNote={won ? 'Practice win — nice! Try a real trainer next.' : 'Practice round — no stakes. Run it back!'}
         onChoose={choose}
         onExit={onExit}
         exitLabel="Back to lobby"
