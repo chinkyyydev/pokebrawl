@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# local-only scratch (downloaded asset source, throwaway test scripts)
+/asset-src/
+/*.mts
+/*.mjs

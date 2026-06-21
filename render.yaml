@@ -1,0 +1,13 @@
+# Render Blueprint — one Web Service that BOTH serves the game (dist/) and runs
+# the WebSocket battle server. Connect this repo on render.com and it auto-configures.
+services:
+  - type: web
+    name: pokemon-1v1
+    runtime: node
+    plan: free # free sleeps after ~15min idle; use "starter" for always-on
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

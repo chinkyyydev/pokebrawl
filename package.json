@@ -1,0 +1,31 @@
+{
+  "name": "pokemon-1v1",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pokemon Showdown-style 1v1 battle game with Solana stake matchmaking.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "tsx watch server/index.ts",
+    "start": "tsx server/index.ts"
+  },
+  "dependencies": {
+    "@pkmn/data": "latest",
+    "@pkmn/dex": "latest",
+    "@pkmn/sim": "latest",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.5.12",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
