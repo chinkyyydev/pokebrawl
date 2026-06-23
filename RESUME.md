@@ -45,6 +45,64 @@ wagering. This file is the "pick up where we left off" guide.
   lobby/builder instead of the title screen (`SCENE_KEY` in App.tsx).
 - **Mobile:** responsive CSS (`@media (max-width: 720px)` in `src/styles.css`).
 
+- **Acquisition system (replaces free species browsing):** new trainers get a
+  one-time 3-choice free draft (`StarterDraft.tsx`) — 1 chosen Pokémon is
+  permanent; the other 2 auto-filled Team-1 slots are **rented for 24 hours**
+  (`profile.rentals`) and auto-rotate to a new random species when the loan
+  expires (`App.tsx`'s `rotateExpiredRentals`, checked on load + every 60s;
+  shown as a "🕒 Rented · Xh left" badge in `TeamBuilder`). Winning matches
+  levels you up (`level` = wins); every 5 levels up to 25 grants one more free
+  random Pokémon, permanently (`App.tsx`'s `recordResult`). You can also buy
+  coin using **$Pokebrawl** (the devnet SPL token, internally still called
+  "PokéCoin" in code/`coin.ts`) to buy a Pokémon: pick 1 of 9 random options
+  (`BuyPokemon.tsx`, "POKÉ SHOP" in Town). `TeamBuilder`'s species picker is
+  now restricted to `profile.collection` (owned species, including current
+  rentals) instead of the full 1025-species dex (`PokemonPicker`'s new `pool`
+  prop). See `src/state/storage.ts` for `LEVEL_MILESTONES`/`BUY_COST`/
+  `RENTAL_DURATION_MS`/coin-reward constants.
+- **Species pool restricted to Gen 1-4, ranked by competitive tier:** every
+  new Pokémon (starter draft, level drops, shop, rental rotation) is drawn
+  from `competitiveSpecies()` (`src/data/pokedex.ts`) — National Dex #1-493
+  only, ranked by the Smogon singles tier `@pkmn/dex` bundles per species
+  (Uber → OU → … → PU/ZU → LC/NFE → untiered), top 400 kept (ties broken by
+  base stat total). `allSpecies()` (full 1025) is still used for general
+  lookups, e.g. resolving species a player already owns. To widen/narrow
+  later gens or pool size, edit `GEN_1_TO_4_MAX_DEX`/`COMPETITIVE_POOL_SIZE`/
+  `TIER_RANK` there.
+- **Shiny variants (1/1000):** every acquisition path rolls `rollShiny()`
+  (`src/game/shiny.ts`) independently of species. `TeamMember.shiny` and the
+  parallel `profile.collection` entries (`CollectionEntry { species, shiny }`
+  — replaced the old `string[]` shape, with a migration in `loadProfile`)
+  carry it through to sprites everywhere: `monSprite`/`monSpriteAnim` take an
+  optional `shiny` arg (`-shiny` sprite path suffix), and a "✨ Shiny" tag
+  shows in `TeamBuilder`/`PokemonPicker`. Only the player's own Pokémon ever
+  roll shiny — CPU/opponent teams never do.
+- **Battle sprites are front-facing for both sides:** `BattleField.tsx`'s
+  `MonImg` dropped the old back-view sprite for the player's own side
+  (`monSpriteBack`/`monSpriteAnimBack` removed from `sprites.ts`) — both
+  `Combatant`s now render the front (`ani`/`gen5`) sprite, shiny-aware via a
+  new `shiny` prop threaded from the player's own team in `BattleView.tsx`/
+  `OnlineMatch.tsx` (opponents' shininess isn't sent over the wire yet, so
+  the foe side never shows shiny even if it secretly is).
+
+### ⚠️ Outstanding: PokéCoin mint not yet created
+`create-coin-mint.mts` (repo root, gitignored) creates the devnet SPL mint,
+but the devnet faucet was rate-limited when this was built — the script's
+mint-authority keypair (saved to `.secrets/coin-mint-authority.json`,
+gitignored) was generated but never funded, so no mint exists yet. To finish:
+1. Fund the printed authority address via <https://faucet.solana.com> (devnet),
+   or just rerun `npx tsx create-coin-mint.mts` later — it reuses the same
+   saved keypair instead of generating a new address each time.
+2. Paste the printed mint address into `COIN_MINT_ADDRESS` in
+   `src/solana/coin.ts` (replacing the `REPLACE_WITH_MINT_ADDRESS` placeholder).
+3. Set `COIN_MINT_SECRET` (the JSON array from the `.secrets/` file) and
+   `COIN_MINT_ADDRESS` as env vars for `npm run server` locally, and in
+   Render's dashboard for production (already declared as `sync: false` in
+   `render.yaml`).
+Until then, `/api/claim-reward` (welcome grant, win reward) responds 503 and
+the "POKÉ SHOP" buy flow can't burn coin — both fail soft (gameplay isn't
+blocked, you just can't earn/spend coin yet).
+
 ## TODO — next session (in priority order)
 
 ### 1. Disconnect / reconnect resume (the "switch tabs/apps without losing" feature)

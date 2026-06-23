@@ -5,22 +5,14 @@ import { toID } from '@pkmn/dex';
 // <img> just shows its alt text, so this degrades gracefully.
 const BASE = 'https://play.pokemonshowdown.com/sprites';
 
-export function monSprite(species: string): string {
-  return `${BASE}/gen5/${toID(species)}.png`;
-}
-
-export function monSpriteBack(species: string): string {
-  return `${BASE}/gen5-back/${toID(species)}.png`;
+export function monSprite(species: string, shiny = false): string {
+  return `${BASE}/gen5${shiny ? '-shiny' : ''}/${toID(species)}.png`;
 }
 
 // Animated (idle-bobbing) sprites. Not every species has one, so callers should
 // fall back to the static gen5 sprites above on load error.
-export function monSpriteAnim(species: string): string {
-  return `${BASE}/ani/${toID(species)}.gif`;
-}
-
-export function monSpriteAnimBack(species: string): string {
-  return `${BASE}/ani-back/${toID(species)}.gif`;
+export function monSpriteAnim(species: string, shiny = false): string {
+  return `${BASE}/ani${shiny ? '-shiny' : ''}/${toID(species)}.gif`;
 }
 
 /** A handful of trainer sprites players can pick as their avatar. */

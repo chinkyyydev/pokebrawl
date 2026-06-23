@@ -5,13 +5,19 @@ import { DialogBox } from './DialogBox';
 
 export function Town({
   profile,
+  reward,
+  onDismissReward,
   onResearch,
   onBattle,
+  onBuy,
   onReset,
 }: {
   profile: Profile;
+  reward: string | null;
+  onDismissReward: () => void;
   onResearch: () => void;
   onBattle: () => void;
+  onBuy: () => void;
   onReset: () => void;
 }) {
   const active = profile.teams[profile.activeTeam];
@@ -29,6 +35,8 @@ export function Town({
         </div>
         <div className="trainer-card-right">
           <div className="record">
+            <span className="record-level">Lv.{profile.level}</span>
+            <span className="record-sep">·</span>
             <span className="record-w">{profile.wins}W</span>
             <span className="record-sep">·</span>
             <span className="record-l">{profile.losses}L</span>
@@ -41,9 +49,18 @@ export function Town({
         </div>
       </div>
 
-      <DialogBox>
-        Welcome to BATTLE TOWN, {profile.name}! Where would you like to go?
-      </DialogBox>
+      {reward ? (
+        <DialogBox speaker="🎉">
+          {reward}
+          <button className="link-btn" onClick={onDismissReward}>
+            Nice!
+          </button>
+        </DialogBox>
+      ) : (
+        <DialogBox>
+          Welcome to BATTLE TOWN, {profile.name}! Where would you like to go?
+        </DialogBox>
+      )}
 
       <div className="locations">
         <button className="location-card" onClick={onResearch}>
@@ -57,6 +74,14 @@ export function Town({
           <span className="location-name">BATTLE STADIUM</span>
           <span className="location-desc">
             {ready ? 'Stake SOL and battle a trainer.' : 'Build a team first!'}
+          </span>
+        </button>
+
+        <button className="location-card" onClick={onBuy}>
+          <span className="location-emoji">🛒</span>
+          <span className="location-name">POKÉ SHOP</span>
+          <span className="location-desc">
+            Buy coin using $Pokebrawl ({profile.collection.length} owned).
           </span>
         </button>
       </div>

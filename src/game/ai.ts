@@ -27,3 +27,24 @@ export function chooseCpuMove(ctrl: BattleController, side: SideID = 'p2'): stri
   // No moves, no switches: forfeit the turn (Struggle is auto-selected by sim).
   return 'move 1';
 }
+
+/**
+ * Pokémon Champions-style timeout fallback: always the first listed option,
+ * not a smart pick — running out the clock shouldn't gift you a good move.
+ */
+export function chooseTopMove(ctrl: BattleController, side: SideID): string {
+  const req = ctrl.request(side);
+  if (req.wait) return '';
+
+  if (req.forceSwitch) {
+    const target = req.switches[0];
+    return target ? `switch ${target.slot}` : 'pass';
+  }
+
+  const usable = req.moves.filter((m) => !m.disabled && m.pp > 0);
+  if (usable.length > 0) return `move ${usable[0].slot}`;
+
+  if (req.switches.length > 0) return `switch ${req.switches[0].slot}`;
+
+  return 'move 1';
+}

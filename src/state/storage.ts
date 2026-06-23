@@ -10,6 +10,28 @@ export const TEAM_SLOTS = 3; // each player has 3 team slots
 export const PARTY_SIZE = 3; // each team is 3 Pokémon
 export const MOVES_PER_MON = 4; // every Pokémon must have all 4 moves
 
+// Level milestones (= win count) that grant a free random Pokémon. Capped at
+// 25 — past that, growing the collection requires buying with coin.
+export const LEVEL_MILESTONES = [5, 10, 15, 20, 25];
+export const BUY_COST = 20; // coin burned per "buy a Pokémon" purchase
+export const WIN_COIN_REWARD = 5; // coin minted to the player per win
+export const WELCOME_COIN_GRANT = 50; // one-time grant after the starter draft
+
+// The 2 computer-picked Pokémon from the starter draft are on loan, not
+// owned — after this long, each is swapped for a fresh random Pokémon.
+export const RENTAL_HOURS = 24;
+export const RENTAL_DURATION_MS = RENTAL_HOURS * 60 * 60 * 1000;
+
+export interface Rental {
+  species: string;
+  expiresAt: number; // epoch ms — past this, the species rotates out
+}
+
+export interface CollectionEntry {
+  species: string;
+  shiny: boolean; // rolled once (1/1000) when this species was acquired
+}
+
 export interface SavedTeam {
   name: string;
   members: Team; // length PARTY_SIZE, nulls for empty slots
@@ -23,6 +45,10 @@ export interface Profile {
   activeTeam: number; // index into teams
   wins: number; // online (PvP) wins
   losses: number; // online (PvP) losses
+  level: number; // = wins, kept explicit for display
+  collection: CollectionEntry[]; // owned species (unique) — gates team building
+  starterDraftDone: boolean; // one-time 3-choice free draft completed?
+  rentals: Rental[]; // currently-on-loan species (subset of collection)
 }
 
 const KEY = 'pokemon1v1:profile';
@@ -47,6 +73,10 @@ export function createProfile(name: string, trainer: string): Profile {
     activeTeam: 0,
     wins: 0,
     losses: 0,
+    level: 0,
+    collection: [],
+    starterDraftDone: false,
+    rentals: [],
   };
 }
 
@@ -69,6 +99,14 @@ export function loadProfile(): Profile | null {
     if (!p.trainer || !TRAINERS.some((t) => t.id === p.trainer)) p.trainer = DEFAULT_TRAINER;
     if (typeof p.wins !== 'number') p.wins = 0;
     if (typeof p.losses !== 'number') p.losses = 0;
+    if (typeof p.level !== 'number') p.level = p.wins;
+    if (!Array.isArray(p.collection)) p.collection = [];
+    // Migrate older saves where collection was just string[] of species names.
+    p.collection = p.collection.map((e) =>
+      typeof e === 'string' ? { species: e, shiny: false } : e,
+    );
+    if (typeof p.starterDraftDone !== 'boolean') p.starterDraftDone = p.collection.length > 0;
+    if (!Array.isArray(p.rentals)) p.rentals = [];
     return p;
   } catch {
     return null;

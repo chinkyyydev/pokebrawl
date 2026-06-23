@@ -616,6 +616,19 @@ select {
   font-size: 0.8rem;
   color: var(--muted);
 }
+.slot-rented {
+  grid-column: 2 / -1;
+  font-size: 0.75rem;
+  color: var(--gold);
+}
+.shiny-tag {
+  margin-left: 6px;
+  color: #ffd84d;
+  text-shadow: 0 0 4px rgba(255, 216, 77, 0.7);
+}
+.rented-notice {
+  color: var(--gold);
+}
 .builder-editor {
   background: var(--panel);
   border: 3px solid var(--border);

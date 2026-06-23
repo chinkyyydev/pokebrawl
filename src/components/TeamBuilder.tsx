@@ -1,28 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   allItems,
   allNatures,
+  allSpecies,
   legalMoves,
   speciesAbilities,
   type MoveLite,
   type SpeciesLite,
 } from '../data/pokedex';
 import { emptyMember, type Team, type TeamMember } from '../types';
-import { teamProblem } from '../state/storage';
+import { teamProblem, type CollectionEntry, type Rental } from '../state/storage';
 import { monSprite } from '../data/sprites';
 import { PokemonPicker } from './PokemonPicker';
 import { MovePicker } from './MovePicker';
 import { isAbilityBanned, isItemBanned } from '../data/bans';
 
+function hoursLeft(expiresAt: number): number {
+  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 3_600_000));
+}
+
 export function TeamBuilder({
   team,
   teamName,
+  collection,
+  rentals,
   onChange,
   onRename,
   onDone,
 }: {
   team: Team;
   teamName: string;
+  collection: CollectionEntry[]; // owned species — the only ones pickable here
+  rentals: Rental[]; // currently-on-loan species (subset of collection)
   onChange: (team: Team) => void;
   onRename: (name: string) => void;
   onDone: () => void;
@@ -55,8 +64,9 @@ export function TeamBuilder({
   }
 
   function pickSpecies(s: SpeciesLite) {
+    const shiny = shinyMap.get(s.name.toLowerCase()) ?? false;
     const copy = team.slice();
-    copy[slot] = emptyMember(s.name, s.abilities[0] ?? '', []);
+    copy[slot] = emptyMember(s.name, s.abilities[0] ?? '', [], shiny);
     onChange(copy);
     setPicking(false);
   }
@@ -83,6 +93,21 @@ export function TeamBuilder({
       .map((m) => m.species.toLowerCase()),
   );
   const problem = teamProblem({ name: teamName, members: team });
+  const shinyMap = useMemo(
+    () => new Map(collection.map((e) => [e.species.toLowerCase(), e.shiny])),
+    [collection],
+  );
+  const shinySpecies = useMemo(
+    () => new Set(collection.filter((e) => e.shiny).map((e) => e.species.toLowerCase())),
+    [collection],
+  );
+  const ownedPool = useMemo(() => {
+    const owned = new Set(collection.map((e) => e.species.toLowerCase()));
+    return allSpecies().filter((s) => owned.has(s.name.toLowerCase()));
+  }, [collection]);
+  const memberRental = member
+    ? rentals.find((r) => r.species.toLowerCase() === member.species.toLowerCase())
+    : undefined;
   const speciesMoves = member ? moveCache[member.species] ?? [] : [];
   const abilityList = member ? speciesAbilities(member.species) : [];
   const natures = allNatures();
@@ -94,38 +119,61 @@ export function TeamBuilder({
   return (
     <div className="builder">
       <div className="builder-slots">
-        {team.map((m, i) => (
-          <button
-            key={i}
-            className={`slot ${i === slot ? 'active' : ''} ${m ? 'filled' : ''}`}
-            onClick={() => {
-              setSlot(i);
-              setPicking(!team[i]);
-            }}
-          >
-            <span className="slot-index">{i + 1}</span>
-            {m ? (
-              <img src={monSprite(m.species)} alt={m.species} className="pixel slot-sprite" />
-            ) : (
-              <span className="slot-sprite empty-ball">·</span>
-            )}
-            <span className="slot-name">{m ? m.species : 'Empty'}</span>
-            {m && (
-              <span className="slot-moves">
-                {m.moves.filter(Boolean).length}/4 moves
+        {team.map((m, i) => {
+          const rental = m
+            ? rentals.find((r) => r.species.toLowerCase() === m.species.toLowerCase())
+            : undefined;
+          return (
+            <button
+              key={i}
+              className={`slot ${i === slot ? 'active' : ''} ${m ? 'filled' : ''}`}
+              onClick={() => {
+                setSlot(i);
+                setPicking(!team[i]);
+              }}
+            >
+              <span className="slot-index">{i + 1}</span>
+              {m ? (
+                <img
+                  src={monSprite(m.species, m.shiny)}
+                  alt={m.species}
+                  className="pixel slot-sprite"
+                />
+              ) : (
+                <span className="slot-sprite empty-ball">·</span>
+              )}
+              <span className="slot-name">
+                {m ? m.species : 'Empty'}
+                {m?.shiny && <span className="shiny-tag">✨</span>}
               </span>
-            )}
-          </button>
-        ))}
+              {m && (
+                <span className="slot-moves">
+                  {m.moves.filter(Boolean).length}/4 moves
+                </span>
+              )}
+              {rental && (
+                <span className="slot-rented">🕒 Rented · {hoursLeft(rental.expiresAt)}h left</span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div className="builder-editor">
         {picking || !member ? (
-          <PokemonPicker onPick={pickSpecies} exclude={usedSpecies} />
+          <PokemonPicker
+            onPick={pickSpecies}
+            exclude={usedSpecies}
+            pool={ownedPool}
+            shinySpecies={shinySpecies}
+          />
         ) : (
           <div className="editor">
             <div className="editor-head">
-              <h2>{member.species}</h2>
+              <h2>
+                {member.species}
+                {member.shiny && <span className="shiny-tag">✨ Shiny</span>}
+              </h2>
               <div className="editor-actions">
                 <button onClick={() => setPicking(true)}>Change Pokémon</button>
                 <button className="danger" onClick={clearSlot}>
@@ -133,6 +181,12 @@ export function TeamBuilder({
                 </button>
               </div>
             </div>
+            {memberRental && (
+              <p className="desc rented-notice">
+                🕒 Rented — auto-swapped for a new random Pokémon in{' '}
+                {hoursLeft(memberRental.expiresAt)}h.
+              </p>
+            )}
 
             <div className="editor-grid">
               <label>

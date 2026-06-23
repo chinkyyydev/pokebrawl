@@ -49,6 +49,63 @@ export function getSpecies(name: string): SpeciesLite | null {
   return s?.exists ? toLite(s) : null;
 }
 
+// Gen 1-4 National Dex cutoff (Bulbasaur #1 through Arceus #493).
+const GEN_1_TO_4_MAX_DEX = 493;
+const COMPETITIVE_POOL_SIZE = 400;
+
+// Smogon singles tier, best to worst. @pkmn/dex bundles each species' current
+// tier directly (s.tier); anything not listed here (CAP, Illegal/Unreleased,
+// or simply untiered) sorts last, after NFE.
+const TIER_RANK: Record<string, number> = {
+  AG: 0,
+  Uber: 1,
+  '(Uber)': 1,
+  OU: 2,
+  '(OU)': 2,
+  UUBL: 3,
+  UU: 4,
+  RUBL: 5,
+  RU: 6,
+  NUBL: 7,
+  NU: 8,
+  '(NU)': 8,
+  PUBL: 9,
+  PU: 10,
+  '(PU)': 10,
+  ZUBL: 11,
+  ZU: 12,
+  LC: 13,
+  NFE: 14,
+};
+const UNTIERED_RANK = 15;
+
+let _competitiveCache: SpeciesLite[] | null = null;
+
+/**
+ * The ~400 most competitively relevant Pokémon from Gens 1-4 (National Dex
+ * #1-493), ranked by their bundled Smogon singles tier (Uber down through
+ * PU/ZU, with LC/NFE/untiered species filling out the rest). This is the
+ * only pool new Pokémon are drawn from for now (see `sampleSpecies` in
+ * src/game/randomTeam.ts) — `allSpecies()` above stays the full dex for
+ * general lookups (e.g. resolving a species a player already owns).
+ */
+export function competitiveSpecies(): SpeciesLite[] {
+  if (_competitiveCache) return _competitiveCache;
+  const bst = (s: ReturnType<typeof Dex.species.get>) =>
+    Object.values(s.baseStats).reduce((a, b) => a + b, 0);
+  const ranked = Dex.species
+    .all()
+    .filter((s) => s.num >= 1 && s.num <= GEN_1_TO_4_MAX_DEX && !(s.forme && s.baseSpecies !== s.name))
+    .map((s) => ({ s, rank: TIER_RANK[s.tier ?? ''] ?? UNTIERED_RANK }))
+    // Within the same tier (most consequentially the untiered/NFE catch-all),
+    // higher base stat total is a better proxy for viability than dex order.
+    .sort((a, b) => a.rank - b.rank || bst(b.s) - bst(a.s) || a.s.num - b.s.num);
+  const top = ranked.slice(0, COMPETITIVE_POOL_SIZE).map((x) => toLite(x.s));
+  top.sort((a, b) => a.num - b.num);
+  _competitiveCache = top;
+  return top;
+}
+
 function toLite(s: ReturnType<typeof Dex.species.get>): SpeciesLite {
   const abilities = Object.values(s.abilities).filter(Boolean) as string[];
   return {

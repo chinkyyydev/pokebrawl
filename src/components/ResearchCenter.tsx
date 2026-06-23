@@ -39,7 +39,11 @@ export function ResearchCenter({
                   return (
                     <div key={s} className={`roster-cell ${m ? 'filled' : ''}`}>
                       {m ? (
-                        <img src={monSprite(m.species)} alt={m.species} className="pixel" />
+                        <img
+                          src={monSprite(m.species, m.shiny)}
+                          alt={m.species}
+                          className="pixel"
+                        />
                       ) : (
                         <span className="empty-ball">·</span>
                       )}

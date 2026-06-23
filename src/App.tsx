@@ -1,27 +1,77 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PokemonSet } from '@pkmn/sim';
 import { TitleScreen } from './components/TitleScreen';
 import { CharacterCreate } from './components/CharacterCreate';
 import { Town } from './components/Town';
 import { ResearchCenter } from './components/ResearchCenter';
 import { TeamBuilder } from './components/TeamBuilder';
+import { StarterDraft } from './components/StarterDraft';
+import { BuyPokemon } from './components/BuyPokemon';
 import { Lobby } from './components/Lobby';
 import { BattleView } from './components/BattleView';
 import { OnlineMatch } from './components/OnlineMatch';
-import { randomTeam } from './game/randomTeam';
+import { randomTeam, randomMember, sampleSpecies } from './game/randomTeam';
+import { rollShiny } from './game/shiny';
 import { toPokemonSet, type Team, type TeamMember } from './types';
+import { useWallet } from './solana/wallet';
+import { claimReward } from './solana/coin';
 import {
   clearProfile,
   createProfile,
   loadProfile,
   saveProfile,
+  LEVEL_MILESTONES,
+  WIN_COIN_REWARD,
+  WELCOME_COIN_GRANT,
+  RENTAL_DURATION_MS,
   type Profile,
 } from './state/storage';
+
+/** Roll over any rented Pokémon whose 24h loan has expired: swap it for a
+ * fresh, fully battle-ready random Pokémon (ability + 4 moves already set,
+ * own shiny roll) everywhere it appears — collection and any team slot.
+ * Returns the same `p` reference if nothing expired, so callers can skip
+ * the state update. */
+async function rotateExpiredRentals(p: Profile): Promise<Profile> {
+  const now = Date.now();
+  if (!p.rentals.some((r) => r.expiresAt <= now)) return p;
+
+  let collection = p.collection;
+  const replacedBy = new Map<string, TeamMember>(); // old species (lower) -> new member
+  const rentals = await Promise.all(
+    p.rentals.map(async (r) => {
+      if (r.expiresAt > now) return r;
+      const exclude = [...collection.map((e) => e.species), ...p.rentals.map((x) => x.species)];
+      const [next] = sampleSpecies(1, exclude);
+      if (!next) return r; // pool exhausted — keep the current one
+      const member = await randomMember(next);
+      member.shiny = rollShiny();
+      replacedBy.set(r.species.toLowerCase(), member);
+      collection = [
+        ...collection.filter((e) => e.species.toLowerCase() !== r.species.toLowerCase()),
+        { species: next.name, shiny: member.shiny },
+      ];
+      return { species: next.name, expiresAt: now + RENTAL_DURATION_MS };
+    }),
+  );
+
+  const teams = p.teams.map((t) => ({
+    ...t,
+    members: t.members.map((m) => {
+      const next = m && replacedBy.get(m.species.toLowerCase());
+      return next ?? m;
+    }),
+  }));
+
+  return { ...p, collection, rentals, teams };
+}
 
 type Scene =
   | { name: 'title' }
   | { name: 'create' }
   | { name: 'town' }
+  | { name: 'starterDraft' }
+  | { name: 'buyPokemon' }
   | { name: 'research' }
   | { name: 'builder'; teamIndex: number }
   | { name: 'lobby' }
@@ -41,6 +91,7 @@ const SCENE_KEY = 'pokemon1v1:scene';
 // resumed (their state lives on the server / in memory), so they fall back to town.
 function restoreScene(profile: Profile | null): Scene {
   if (!profile) return { name: 'title' };
+  if (!profile.starterDraftDone) return { name: 'starterDraft' };
   try {
     const raw = localStorage.getItem(SCENE_KEY);
     if (raw) {
@@ -64,11 +115,34 @@ function restoreScene(profile: Profile | null): Scene {
 export default function App() {
   const [profile, setProfile] = useState<Profile | null>(() => loadProfile());
   const [scene, setScene] = useState<Scene>(() => restoreScene(profile));
+  const { address } = useWallet();
+  const [reward, setReward] = useState<string | null>(null); // "Level 10! New Pokémon: X"
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
 
   // Persist on every profile change. Swap this for wallet/backend later.
   useEffect(() => {
     if (profile) saveProfile(profile);
   }, [profile]);
+
+  // Catch rental expiries: once immediately (covers time passed while the
+  // tab was closed) and every 60s while it stays open.
+  useEffect(() => {
+    if (!profile) return;
+    let cancelled = false;
+    async function check() {
+      const current = profileRef.current;
+      if (!current) return;
+      const next = await rotateExpiredRentals(current);
+      if (!cancelled && next !== current) setProfile(next);
+    }
+    check();
+    const id = setInterval(check, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [!!profile]);
 
   // Remember where the player is so a refresh resumes here (not the title).
   useEffect(() => {
@@ -106,11 +180,25 @@ export default function App() {
     setScene({ name: 'battle', stake, player, cpu });
   }
 
-  // Record an online (PvP) match result onto the profile's W/L.
+  // Record an online (PvP) match result onto the profile's W/L. Wins also
+  // level the player up: every 5 levels (up to 25) grants a free random
+  // Pokémon, and — if a wallet is connected — a small coin reward.
   function recordResult(won: boolean) {
-    setProfile((p) =>
-      p ? { ...p, wins: p.wins + (won ? 1 : 0), losses: p.losses + (won ? 0 : 1) } : p,
-    );
+    setProfile((p) => {
+      if (!p) return p;
+      const wins = p.wins + (won ? 1 : 0);
+      let collection = p.collection;
+      if (won && LEVEL_MILESTONES.includes(wins)) {
+        const [drop] = sampleSpecies(1, collection.map((e) => e.species));
+        if (drop) {
+          const shiny = rollShiny();
+          collection = [...collection, { species: drop.name, shiny }];
+          setReward(`${shiny ? '✨ SHINY ' : ''}Level ${wins}! New Pokémon: ${drop.name}`);
+        }
+      }
+      if (won && address) claimReward(address, WIN_COIN_REWARD);
+      return { ...p, wins, level: wins, losses: p.losses + (won ? 0 : 1), collection };
+    });
   }
 
   return (
@@ -133,19 +221,63 @@ export default function App() {
         <CharacterCreate
           onCreate={(name, trainer) => {
             setProfile(createProfile(name, trainer));
-            setScene({ name: 'town' });
+            setScene({ name: 'starterDraft' });
           }}
         />
       );
     }
 
     switch (scene.name) {
+      case 'starterDraft':
+        return (
+          <StarterDraft
+            onDone={(members) => {
+              members.forEach((m) => {
+                m.shiny = rollShiny();
+              });
+              const rest = members.slice(1);
+              const collection = members.map((m) => ({ species: m.species, shiny: !!m.shiny }));
+              const expiresAt = Date.now() + RENTAL_DURATION_MS;
+              setProfile((p) =>
+                p
+                  ? {
+                      ...p,
+                      collection,
+                      starterDraftDone: true,
+                      rentals: rest.map((m) => ({ species: m.species, expiresAt })),
+                      teams: p.teams.map((t, i) => (i === 0 ? { ...t, members } : t)),
+                    }
+                  : p,
+              );
+              if (address) claimReward(address, WELCOME_COIN_GRANT);
+              setScene({ name: 'town' });
+            }}
+          />
+        );
+
+      case 'buyPokemon':
+        return (
+          <BuyPokemon
+            collection={profile.collection}
+            onBought={(species) => {
+              const shiny = rollShiny();
+              setProfile((p) =>
+                p ? { ...p, collection: [...p.collection, { species, shiny }] } : p,
+              );
+            }}
+            onBack={() => setScene({ name: 'town' })}
+          />
+        );
+
       case 'town':
         return (
           <Town
             profile={profile}
+            reward={reward}
+            onDismissReward={() => setReward(null)}
             onResearch={() => setScene({ name: 'research' })}
             onBattle={() => setScene({ name: 'lobby' })}
+            onBuy={() => setScene({ name: 'buyPokemon' })}
             onReset={() => {
               clearProfile();
               setProfile(null);
@@ -171,6 +303,8 @@ export default function App() {
           <TeamBuilder
             team={team.members}
             teamName={team.name}
+            collection={profile.collection}
+            rentals={profile.rentals}
             onChange={(members) => updateTeamMembers(idx, members)}
             onRename={(name) => renameTeam(idx, name)}
             onDone={() => setScene({ name: 'research' })}

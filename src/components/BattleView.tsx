@@ -67,6 +67,9 @@ export function BattleView({
   const p2 = ctrl.active('p2');
   const req = ctrl.request('p1');
   const won = ctrl.winner === 'You';
+  const shinyMap = useRef(
+    new Map(playerTeam.map((s) => [s.species.toLowerCase(), !!s.shiny])),
+  ).current;
 
   return (
     <div className="battle">
@@ -77,7 +80,13 @@ export function BattleView({
 
       <div className="field">
         <Combatant who="CPU" mon={p2} party={ctrl.party('p2')} foe anim={fx.p2} />
-        <Combatant who="You" mon={p1} party={ctrl.party('p1')} anim={fx.p1} />
+        <Combatant
+          who="You"
+          mon={p1}
+          party={ctrl.party('p1')}
+          anim={fx.p1}
+          shiny={p1 ? shinyMap.get(p1.species.toLowerCase()) : false}
+        />
       </div>
 
       <BattleControls

@@ -65,7 +65,12 @@ export function Lobby({
             <div className="lobby-team-name">{t.name}</div>
             <div className="lobby-team-roster">
               {t.members.filter(Boolean).map((m, k) => (
-                <img key={k} src={monSprite(m!.species)} alt={m!.species} className="pixel" />
+                <img
+                  key={k}
+                  src={monSprite(m!.species, m!.shiny)}
+                  alt={m!.species}
+                  className="pixel"
+                />
               ))}
             </div>
             <div className="muted">{teamCount(t)}/3</div>

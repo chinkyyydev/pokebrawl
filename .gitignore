@@ -13,5 +13,8 @@ dist-ssr
 /*.mts
 /*.mjs
 
+# Solana keypairs — never commit a private key
+/.secrets/
+
 # Claude Code local settings
 /.claude/

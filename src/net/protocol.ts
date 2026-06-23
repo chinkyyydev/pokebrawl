@@ -20,6 +20,10 @@ export interface BattleStateMsg {
   log: string[]; // new human-readable lines since the last state
   ended: boolean;
   winner: 'you' | 'foe' | null;
+  // Pokémon Champions-style clock: a single visible 45s turn timer, backed by
+  // a 7-minute total match clock per player (like a chess clock).
+  turnDeadline: number | null; // epoch ms when your unsubmitted choice auto-resolves; null once you've acted
+  clockMs: { you: number; foe: number }; // remaining match clock for each side
 }
 
 export type ClientMsg =
@@ -32,7 +36,6 @@ export type ServerMsg =
   | { type: 'queued'; stake: number; players: number }
   | { type: 'matchFound'; opponentName: string; opponentWallet: string }
   | BattleStateMsg
-  // The hidden turn timer expired; show a visible `seconds` countdown warning.
-  | { type: 'timerWarning'; seconds: number }
+  | { type: 'timeUp'; youWon: boolean } // a player's match clock hit zero
   | { type: 'opponentLeft' }
   | { type: 'error'; message: string };

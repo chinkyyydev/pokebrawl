@@ -8,6 +8,12 @@ import { useWallet } from '../solana/wallet';
 
 type Phase = 'connecting' | 'queued' | 'battle' | 'error';
 
+/** Format a remaining match-clock duration as mm:ss, chess-clock style. */
+function fmtClock(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+}
+
 export function OnlineMatch({
   name,
   stake,
@@ -35,9 +41,14 @@ export function OnlineMatch({
   const [waiting, setWaiting] = useState(false); // submitted a choice, awaiting next turn
   const [fx, setFx] = useState<{ you?: Fx; foe?: Fx }>({});
   const [endNote, setEndNote] = useState<string | null>(null);
-  const [warnEndsAt, setWarnEndsAt] = useState<number | null>(null); // visible warning deadline
+  const [turnDeadline, setTurnDeadline] = useState<number | null>(null); // 45s visible turn timer
   const [nowTs, setNowTs] = useState(Date.now());
-  const warnLeft = warnEndsAt != null ? Math.max(0, Math.ceil((warnEndsAt - nowTs) / 1000)) : null;
+  const turnLeft = turnDeadline != null ? Math.max(0, Math.ceil((turnDeadline - nowTs) / 1000)) : null;
+  const shinyMap = useRef(
+    new Map(
+      members.filter((m): m is TeamMember => !!m).map((m) => [m.species.toLowerCase(), !!m.shiny]),
+    ),
+  ).current;
 
   useEffect(() => {
     const team = members
@@ -61,12 +72,12 @@ export function OnlineMatch({
     logBoxRef.current?.scrollTo({ top: logBoxRef.current.scrollHeight });
   });
 
-  // Tick the visible warning countdown once it's active.
+  // Tick the visible turn countdown while it's your move.
   useEffect(() => {
-    if (warnEndsAt == null) return;
+    if (turnDeadline == null) return;
     const id = setInterval(() => setNowTs(Date.now()), 250);
     return () => clearInterval(id);
-  }, [warnEndsAt]);
+  }, [turnDeadline]);
 
   function handleMessage(msg: ServerMsg) {
     switch (msg.type) {
@@ -80,15 +91,20 @@ export function OnlineMatch({
       case 'state':
         applyState(msg);
         break;
-      case 'timerWarning':
-        setWarnEndsAt(Date.now() + msg.seconds * 1000);
-        setNowTs(Date.now());
-        break;
       case 'opponentLeft':
         setEndNote('Your opponent left — you win by forfeit!');
         if (!recordedRef.current) {
           recordedRef.current = true;
           onResult?.(true);
+        }
+        break;
+      case 'timeUp':
+        setEndNote(
+          msg.youWon ? 'Your opponent ran out of time — you win!' : 'You ran out of time — you lose.',
+        );
+        if (!recordedRef.current) {
+          recordedRef.current = true;
+          onResult?.(msg.youWon);
         }
         break;
       case 'error':
@@ -113,7 +129,8 @@ export function OnlineMatch({
     prevState.current = msg;
     setState(msg);
     setWaiting(false);
-    setWarnEndsAt(null); // new decision point — hide any prior warning
+    setTurnDeadline(msg.turnDeadline);
+    setNowTs(Date.now());
     if (msg.log.length) setLog((l) => [...l, ...msg.log]);
 
     if (msg.ended && !recordedRef.current) {
@@ -125,7 +142,7 @@ export function OnlineMatch({
   function choose(choice: string) {
     clientRef.current?.send({ type: 'choice', choice });
     setWaiting(true);
-    setWarnEndsAt(null); // you've acted — drop the warning
+    setTurnDeadline(null); // you've acted — drop the countdown
   }
 
   function leave() {
@@ -182,11 +199,17 @@ export function OnlineMatch({
 
   const ended = state.ended || !!endNote;
   const won = endNote ? true : state.winner === 'you';
+  const youActiveShiny = state.you.active
+    ? shinyMap.get(state.you.active.species.toLowerCase())
+    : false;
   return (
     <div className="battle">
       <div className="battle-top">
         <div className="stake-pill">
           {stake === 0 ? 'Free play' : `${stake} SOL`} · vs {opponent || 'opponent'}
+        </div>
+        <div className="clock-pill">
+          ⏱ You {fmtClock(state.clockMs.you)} · Opp {fmtClock(state.clockMs.foe)}
         </div>
         <button onClick={leave}>Forfeit / Exit</button>
       </div>
@@ -199,12 +222,18 @@ export function OnlineMatch({
           foe
           anim={fx.foe}
         />
-        <Combatant who="You" mon={state.you.active} party={state.you.party} anim={fx.you} />
+        <Combatant
+          who="You"
+          mon={state.you.active}
+          party={state.you.party}
+          anim={fx.you}
+          shiny={youActiveShiny}
+        />
       </div>
 
-      {!ended && warnLeft != null && warnLeft > 0 && (
-        <div className={`turn-timer ${warnLeft <= 10 ? 'urgent' : ''}`}>
-          ⏰ {warnLeft}s to choose — or a move is picked for you!
+      {!ended && turnLeft != null && turnLeft > 0 && (
+        <div className={`turn-timer ${turnLeft <= 10 ? 'urgent' : ''}`}>
+          ⏰ {turnLeft}s to choose — or a move is picked for you!
         </div>
       )}
 

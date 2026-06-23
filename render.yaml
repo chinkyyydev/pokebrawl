@@ -11,3 +11,10 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # PokéCoin (devnet SPL token, burned to buy Pokémon) — set these in the
+      # Render dashboard, NOT here (this file is committed to git). See
+      # create-coin-mint.mts for how they're generated.
+      - key: COIN_MINT_SECRET
+        sync: false
+      - key: COIN_MINT_ADDRESS
+        sync: false

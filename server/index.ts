@@ -5,22 +5,82 @@
 // relays state to both. Clients send only choices ("move 1"); the server alone
 // decides outcomes — so nobody can fake damage or results.
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, normalize } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { PokemonSet } from '@pkmn/sim';
+import { Connection, Keypair, PublicKey, clusterApiUrl } from '@solana/web3.js';
+import { getOrCreateAssociatedTokenAccount, mintTo } from '@solana/spl-token';
 import { BattleController, type SideID } from '../src/game/battle';
-import { chooseCpuMove } from '../src/game/ai';
+import { chooseTopMove } from '../src/game/ai';
 import { teamBanViolation } from '../src/data/bans';
 import type { BattleStateMsg, ClientMsg, ServerMsg } from '../src/net/protocol';
 
 const PORT = Number(process.env.PORT ?? 8080);
 
-// Turn clock: a hidden window, then a visible warning countdown, then auto-pick.
-const HIDDEN_MS = 60_000; // secret 60s
-const WARN_SECONDS = 45; // visible 45s warning
-const WARN_MS = WARN_SECONDS * 1000;
+// PokéCoin reward minting (welcome grant, per-win reward). Only active once
+// COIN_MINT_SECRET/COIN_MINT_ADDRESS are set — see create-coin-mint.mts.
+const coinConnection = new Connection(clusterApiUrl('devnet'), 'confirmed');
+const coinAuthority = process.env.COIN_MINT_SECRET
+  ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(process.env.COIN_MINT_SECRET)))
+  : null;
+const coinMint = process.env.COIN_MINT_ADDRESS ? new PublicKey(process.env.COIN_MINT_ADDRESS) : null;
+
+async function handleClaimReward(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (!coinAuthority || !coinMint) {
+    res.writeHead(503, { 'Content-Type': 'application/json', ...cors });
+    res.end(JSON.stringify({ ok: false, error: 'Coin not configured yet' }));
+    return;
+  }
+  try {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const { wallet, amount } = JSON.parse(Buffer.concat(chunks).toString());
+    if (typeof wallet !== 'string' || !wallet || typeof amount !== 'number' || amount <= 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json', ...cors });
+      res.end(JSON.stringify({ ok: false, error: 'Invalid wallet/amount' }));
+      return;
+    }
+    const owner = new PublicKey(wallet);
+    const ata = await getOrCreateAssociatedTokenAccount(
+      coinConnection,
+      coinAuthority,
+      coinMint,
+      owner,
+    );
+    const signature = await mintTo(
+      coinConnection,
+      coinAuthority,
+      coinMint,
+      ata.address,
+      coinAuthority,
+      Math.floor(amount),
+    );
+    res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
+    res.end(JSON.stringify({ ok: true, signature }));
+  } catch (err) {
+    console.error('claim-reward failed:', err);
+    res.writeHead(500, { 'Content-Type': 'application/json', ...cors });
+    res.end(JSON.stringify({ ok: false, error: 'Mint failed' }));
+  }
+}
+
+// Pokémon Champions-style clock: one visible 45s timer per turn, backed by a
+// 7-minute total match clock per player (like a chess clock). Whichever runs
+// out first decides the turn (auto-pick) or the match (instant loss).
+const TURN_MS = 45_000;
+const MATCH_CLOCK_MS = 7 * 60_000;
 
 // In production this same service also serves the built game (Vite's dist/).
 const DIST = join(import.meta.dirname, '..', 'dist');
@@ -78,8 +138,12 @@ class Match {
   readonly ctrl: BattleController;
   // Choices submitted so far this turn, keyed by side.
   private choices: { p1?: string; p2?: string } = {};
-  private warnTimer?: ReturnType<typeof setTimeout>;
-  private deadlineTimer?: ReturnType<typeof setTimeout>;
+  // Remaining match clock per side, like a chess clock — only the time a
+  // side actually spends deciding counts against it.
+  private clock: Record<SideID, number> = { p1: MATCH_CLOCK_MS, p2: MATCH_CLOCK_MS };
+  private turnStartedAt = 0;
+  private timers: Partial<Record<SideID, ReturnType<typeof setTimeout>>> = {};
+  private over = false;
 
   constructor(
     readonly p1: Client,
@@ -109,10 +173,12 @@ class Match {
   /** Send each player a fresh snapshot framed from their own point of view. */
   private pushState(lines: string[]): void {
     const winSide = this.ctrl.winnerSide();
+    const pendingSides = this.pending();
     for (const side of ['p1', 'p2'] as const) {
       const me = this.clientFor(side);
       const foeSide: SideID = side === 'p1' ? 'p2' : 'p1';
       const foe = this.clientFor(foeSide);
+      const stillPending = !this.ctrl.ended && pendingSides.includes(side);
       const msg: BattleStateMsg = {
         type: 'state',
         stake: this.stake,
@@ -122,6 +188,8 @@ class Match {
         log: lines,
         ended: this.ctrl.ended,
         winner: this.ctrl.ended ? (winSide === side ? 'you' : winSide ? 'foe' : null) : null,
+        turnDeadline: stillPending ? this.turnStartedAt + Math.min(TURN_MS, this.clock[side]) : null,
+        clockMs: { you: this.clock[side], foe: this.clock[foeSide] },
       };
       send(me.ws, msg);
     }
@@ -136,8 +204,12 @@ class Match {
 
   /** A player submitted a choice for the current turn. */
   onChoice(side: SideID, choice: string): void {
-    if (this.ctrl.ended) return;
+    if (this.over || this.ctrl.ended) return;
     if (this.ctrl.request(side).wait) return; // it isn't this side's turn to act
+    if (this.choices[side] != null) return; // already acted this turn
+    this.spendClock(side);
+    if (this.clock[side] <= 0) return this.timeUp(side); // clock ran out right as they chose
+    this.clearTimer(side);
     this.choices[side] = choice;
     if (this.pending().length === 0) this.resolveTurn(); // everyone has acted
   }
@@ -154,32 +226,52 @@ class Match {
     else this.startTimers(); // next decision point
   }
 
-  // ---- Turn clock ----
+  // ---- Turn clock (Pokémon Champions style: 45s/turn, 7min/match) ----
   private startTimers(): void {
     this.clearTimers();
-    // Hidden window first; then warn whoever still owes a choice.
-    this.warnTimer = setTimeout(() => {
-      for (const side of this.pending()) {
-        send(this.clientFor(side).ws, { type: 'timerWarning', seconds: WARN_SECONDS });
-      }
-    }, HIDDEN_MS);
-    // Deadline: auto-pick for anyone who never chose, then resolve.
-    this.deadlineTimer = setTimeout(() => this.forceResolve(), HIDDEN_MS + WARN_MS);
+    this.turnStartedAt = Date.now();
+    for (const side of this.pending()) {
+      const ms = Math.min(TURN_MS, this.clock[side]);
+      this.timers[side] = setTimeout(() => this.onTimeout(side), ms);
+    }
   }
 
-  private forceResolve(): void {
-    if (this.ctrl.ended) return;
-    for (const side of this.pending()) {
-      this.choices[side] = chooseCpuMove(this.ctrl, side); // default move / forced switch
-    }
-    this.resolveTurn();
+  /** A side's timer fired: spend whatever time they had, then act for them. */
+  private onTimeout(side: SideID): void {
+    if (this.over || this.ctrl.ended) return;
+    if (this.choices[side] != null) return; // shouldn't happen — kept as a guard
+    this.timers[side] = undefined;
+    this.spendClock(side);
+    if (this.clock[side] <= 0) return this.timeUp(side); // out of match clock: instant loss
+    this.choices[side] = chooseTopMove(this.ctrl, side); // top-listed option, not a smart pick
+    if (this.pending().length === 0) this.resolveTurn();
+  }
+
+  /** Deduct the time this side just spent deciding from their match clock. */
+  private spendClock(side: SideID): void {
+    const spent = Date.now() - this.turnStartedAt;
+    this.clock[side] = Math.max(0, this.clock[side] - spent);
+  }
+
+  private clearTimer(side: SideID): void {
+    const t = this.timers[side];
+    if (t) clearTimeout(t);
+    this.timers[side] = undefined;
   }
 
   private clearTimers(): void {
-    if (this.warnTimer) clearTimeout(this.warnTimer);
-    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
-    this.warnTimer = undefined;
-    this.deadlineTimer = undefined;
+    this.clearTimer('p1');
+    this.clearTimer('p2');
+  }
+
+  /** A side's 7-minute match clock hit zero: instant loss, match over. */
+  private timeUp(side: SideID): void {
+    if (this.over) return;
+    const loser = this.clientFor(side);
+    const winner = side === 'p1' ? this.p2 : this.p1;
+    send(loser.ws, { type: 'timeUp', youWon: false });
+    send(winner.ws, { type: 'timeUp', youWon: true });
+    this.cleanup();
   }
 
   /** One player left mid-battle: the other wins by forfeit. */
@@ -190,6 +282,7 @@ class Match {
   }
 
   private cleanup(): void {
+    this.over = true;
     this.clearTimers();
     this.p1.match = undefined;
     this.p2.match = undefined;
@@ -234,8 +327,13 @@ function dequeue(client: Client): void {
   for (const [stake, list] of queues) queues.set(stake, list.filter((c) => c !== client));
 }
 
-// HTTP server: serves the built game + answers Render's health check.
+// HTTP server: serves the built game, the coin-reward API, and answers
+// Render's health check.
 const httpServer = createServer(async (req, res) => {
+  if (req.url === '/api/claim-reward') {
+    await handleClaimReward(req, res);
+    return;
+  }
   const { status, type, body } = await serveStatic(req.url ?? '/');
   res.writeHead(status, { 'Content-Type': type });
   res.end(body);

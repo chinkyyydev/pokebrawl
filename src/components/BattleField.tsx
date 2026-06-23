@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ActiveView, RequestView } from '../game/battle';
-import {
-  monSprite,
-  monSpriteBack,
-  monSpriteAnim,
-  monSpriteAnimBack,
-} from '../data/sprites';
+import { monSprite, monSpriteAnim } from '../data/sprites';
 
 // Transient battle animation on a sprite: attack lunge or hit shake.
 export type Fx = 'atk' | 'hit' | undefined;
@@ -17,12 +12,14 @@ export function Combatant({
   party,
   foe,
   anim,
+  shiny,
 }: {
   who: string;
   mon: ActiveView | null;
   party: { fainted: boolean }[];
   foe?: boolean;
   anim?: Fx;
+  shiny?: boolean;
 }) {
   return (
     <div className={`combatant ${foe ? 'foe' : 'ally'} ${mon?.fainted ? 'fainted' : ''}`}>
@@ -36,7 +33,7 @@ export function Combatant({
       </div>
       {mon ? (
         <>
-          <MonImg species={mon.species} back={!foe} foe={!!foe} anim={anim} />
+          <MonImg species={mon.species} foe={!!foe} anim={anim} shiny={shiny} />
           <div className="mon-name">
             {mon.species} <span className="muted">Lv{mon.level}</span>
             {mon.status && <span className={`status status-${mon.status}`}>{mon.status}</span>}
@@ -62,25 +59,26 @@ export function Combatant({
   );
 }
 
-/** Pokémon sprite: animated by default, falls back to the static gen5 sprite. */
+/** Pokémon sprite: animated by default, falls back to the static gen5 sprite.
+ * Always front-facing (both ally and foe), shiny-aware. */
 function MonImg({
   species,
-  back,
   foe,
   anim,
+  shiny,
 }: {
   species: string;
-  back: boolean;
   foe: boolean;
   anim?: Fx;
+  shiny?: boolean;
 }) {
   const [stage, setStage] = useState(0); // 0 = animated gif, 1 = static png fallback
   useEffect(() => {
     setStage(0);
   }, [species]);
 
-  const animated = back ? monSpriteAnimBack(species) : monSpriteAnim(species);
-  const still = back ? monSpriteBack(species) : monSprite(species);
+  const animated = monSpriteAnim(species, shiny);
+  const still = monSprite(species, shiny);
   const src = stage === 0 ? animated : still;
   const fxClass =
     anim === 'hit' ? 'fx-hit' : anim === 'atk' ? (foe ? 'fx-atk-foe' : 'fx-atk-ally') : '';

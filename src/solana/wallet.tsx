@@ -1,13 +1,15 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { Transaction } from '@solana/web3.js';
 
-// Minimal typing for Phantom's injected provider. We talk to it directly so we
-// need no Solana libraries yet (those come when we move actual SOL).
+// Minimal typing for Phantom's injected provider. We talk to it directly
+// rather than through a wallet-adapter abstraction.
 interface PhantomProvider {
   isPhantom?: boolean;
   publicKey?: { toString(): string } | null;
   connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: { toString(): string } }>;
   disconnect: () => Promise<void>;
   signMessage?: (msg: Uint8Array, display?: string) => Promise<{ signature: Uint8Array }>;
+  signAndSendTransaction?: (tx: Transaction) => Promise<{ signature: string }>;
   on: (event: string, handler: (args: unknown) => void) => void;
   removeListener?: (event: string, handler: (args: unknown) => void) => void;
 }
@@ -31,6 +33,8 @@ interface WalletState {
   connecting: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  /** Sign + send a transaction via Phantom. Throws if no wallet is connected. */
+  signAndSendTransaction: (tx: Transaction) => Promise<string>;
 }
 
 const WalletCtx = createContext<WalletState | null>(null);
@@ -82,8 +86,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setAddress(null);
   }
 
+  async function signAndSendTransaction(tx: Transaction): Promise<string> {
+    const p = getProvider();
+    if (!p?.signAndSendTransaction) throw new Error('Connect a wallet first.');
+    const { signature } = await p.signAndSendTransaction(tx);
+    return signature;
+  }
+
   return (
-    <WalletCtx.Provider value={{ installed, address, connecting, connect, disconnect }}>
+    <WalletCtx.Provider
+      value={{ installed, address, connecting, connect, disconnect, signAndSendTransaction }}
+    >
       {children}
     </WalletCtx.Provider>
   );
