@@ -3,7 +3,8 @@ import type { SpeciesLite } from '../data/pokedex';
 import { sampleSpecies } from '../game/randomTeam';
 import { buildBurnTx, getCoinBalance } from '../solana/coin';
 import { useWallet } from '../solana/wallet';
-import { BUY_COST, type CollectionEntry } from '../state/storage';
+import { BUY_COST } from '../state/storage';
+import type { TeamMember } from '../types';
 import { PokemonPicker } from './PokemonPicker';
 import { DialogBox } from './DialogBox';
 
@@ -12,7 +13,7 @@ export function BuyPokemon({
   onBought,
   onBack,
 }: {
-  collection: CollectionEntry[];
+  collection: TeamMember[];
   onBought: (species: string) => void;
   onBack: () => void;
 }) {
@@ -40,7 +41,7 @@ export function BuyPokemon({
     try {
       const tx = await buildBurnTx(address, BUY_COST);
       await signAndSendTransaction(tx);
-      setOptions(sampleSpecies(9, collection.map((e) => e.species)));
+      setOptions(sampleSpecies(9, collection.map((m) => m.species)));
       setBalance((b) => (b ?? 0) - BUY_COST);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Purchase failed.');

@@ -27,11 +27,6 @@ export interface Rental {
   expiresAt: number; // epoch ms — past this, the species rotates out
 }
 
-export interface CollectionEntry {
-  species: string;
-  shiny: boolean; // rolled once (1/1000) when this species was acquired
-}
-
 export interface SavedTeam {
   name: string;
   members: Team; // length PARTY_SIZE, nulls for empty slots
@@ -46,7 +41,10 @@ export interface Profile {
   wins: number; // online (PvP) wins
   losses: number; // online (PvP) losses
   level: number; // = wins, kept explicit for display
-  collection: CollectionEntry[]; // owned species (unique) — gates team building
+  // Every Pokémon ever acquired, fully rolled (ability/nature/item/moves all
+  // fixed permanently at acquisition time — see randomMember()) — gates team
+  // building (TeamBuilder can only place species already in here).
+  collection: TeamMember[];
   starterDraftDone: boolean; // one-time 3-choice free draft completed?
   rentals: Rental[]; // currently-on-loan species (subset of collection)
 }
@@ -101,10 +99,20 @@ export function loadProfile(): Profile | null {
     if (typeof p.losses !== 'number') p.losses = 0;
     if (typeof p.level !== 'number') p.level = p.wins;
     if (!Array.isArray(p.collection)) p.collection = [];
-    // Migrate older saves where collection was just string[] of species names.
-    p.collection = p.collection.map((e) =>
-      typeof e === 'string' ? { species: e, shiny: false } : e,
-    );
+    // Migrate older saves: collection used to be string[] of species names,
+    // then { species, shiny }[]. Normalize whatever shape shows up into a
+    // (possibly incomplete) TeamMember — App.tsx's repairProfile() fills in
+    // any missing ability/nature/item/moves with a fresh random roll.
+    p.collection = (p.collection as unknown[]).map((raw) => {
+      const e = raw as { species: string; shiny?: boolean; ability?: string };
+      if (typeof raw === 'string') {
+        return { species: raw, ability: '', item: '', moves: [], nature: 'Hardy', shiny: false };
+      }
+      if (!('ability' in e)) {
+        return { species: e.species, ability: '', item: '', moves: [], nature: 'Hardy', shiny: !!e.shiny };
+      }
+      return e as TeamMember;
+    });
     if (typeof p.starterDraftDone !== 'boolean') p.starterDraftDone = p.collection.length > 0;
     if (!Array.isArray(p.rentals)) p.rentals = [];
     return p;

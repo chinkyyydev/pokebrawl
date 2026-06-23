@@ -12,6 +12,7 @@ import { BattleView } from './components/BattleView';
 import { OnlineMatch } from './components/OnlineMatch';
 import { randomTeam, randomMember, sampleSpecies } from './game/randomTeam';
 import { rollShiny } from './game/shiny';
+import { getSpecies } from './data/pokedex';
 import { toPokemonSet, type Team, type TeamMember } from './types';
 import { useWallet } from './solana/wallet';
 import { claimReward } from './solana/coin';
@@ -27,17 +28,37 @@ import {
   type Profile,
 } from './state/storage';
 
-/** Roll over any rented Pokémon whose 24h loan has expired: swap it for a
- * fresh, fully battle-ready random Pokémon (ability + 4 moves already set,
- * own shiny roll) everywhere it appears — collection and any team slot.
- * Returns the same `p` reference if nothing expired, so callers can skip
- * the state update. */
-async function rotateExpiredRentals(p: Profile): Promise<Profile> {
+/**
+ * Two repair jobs that both need an async dice-roll, run together so there's
+ * only one "fix the profile" pass:
+ *  1. Any rented Pokémon whose 24h loan expired gets swapped for a fresh
+ *     random Pokémon (everywhere it appears — collection and team slots).
+ *  2. Any legacy collection entry from before ability/nature/item/moves were
+ *     rolled-and-locked at acquisition time (an old save) gets a proper
+ *     random roll now, so it isn't permanently stuck "incomplete" with no
+ *     way to fix it (the team builder no longer lets you edit these by hand).
+ * Returns the same `p` reference if nothing needed fixing, so callers can
+ * skip the state update.
+ */
+async function repairProfile(p: Profile): Promise<Profile> {
   const now = Date.now();
-  if (!p.rentals.some((r) => r.expiresAt <= now)) return p;
+  const legacyIncomplete = p.collection.filter((m) => m.moves.length === 0);
+  if (!p.rentals.some((r) => r.expiresAt <= now) && legacyIncomplete.length === 0) return p;
 
   let collection = p.collection;
   const replacedBy = new Map<string, TeamMember>(); // old species (lower) -> new member
+
+  for (const m of legacyIncomplete) {
+    const sp = getSpecies(m.species);
+    if (!sp) continue;
+    const fresh = await randomMember(sp);
+    fresh.shiny = m.shiny;
+    replacedBy.set(m.species.toLowerCase(), fresh);
+    collection = collection.map((e) =>
+      e.species.toLowerCase() === m.species.toLowerCase() ? fresh : e,
+    );
+  }
+
   const rentals = await Promise.all(
     p.rentals.map(async (r) => {
       if (r.expiresAt > now) return r;
@@ -49,7 +70,7 @@ async function rotateExpiredRentals(p: Profile): Promise<Profile> {
       replacedBy.set(r.species.toLowerCase(), member);
       collection = [
         ...collection.filter((e) => e.species.toLowerCase() !== r.species.toLowerCase()),
-        { species: next.name, shiny: member.shiny },
+        member,
       ];
       return { species: next.name, expiresAt: now + RENTAL_DURATION_MS };
     }),
@@ -125,15 +146,15 @@ export default function App() {
     if (profile) saveProfile(profile);
   }, [profile]);
 
-  // Catch rental expiries: once immediately (covers time passed while the
-  // tab was closed) and every 60s while it stays open.
+  // Catch rental expiries + legacy data repair: once immediately (covers
+  // time passed while the tab was closed) and every 60s while it stays open.
   useEffect(() => {
     if (!profile) return;
     let cancelled = false;
     async function check() {
       const current = profileRef.current;
       if (!current) return;
-      const next = await rotateExpiredRentals(current);
+      const next = await repairProfile(current);
       if (!cancelled && next !== current) setProfile(next);
     }
     check();
@@ -184,21 +205,24 @@ export default function App() {
   // level the player up: every 5 levels (up to 25) grants a free random
   // Pokémon, and — if a wallet is connected — a small coin reward.
   function recordResult(won: boolean) {
+    let wins = 0;
     setProfile((p) => {
       if (!p) return p;
-      const wins = p.wins + (won ? 1 : 0);
-      let collection = p.collection;
-      if (won && LEVEL_MILESTONES.includes(wins)) {
-        const [drop] = sampleSpecies(1, collection.map((e) => e.species));
-        if (drop) {
-          const shiny = rollShiny();
-          collection = [...collection, { species: drop.name, shiny }];
-          setReward(`${shiny ? '✨ SHINY ' : ''}Level ${wins}! New Pokémon: ${drop.name}`);
-        }
-      }
-      if (won && address) claimReward(address, WIN_COIN_REWARD);
-      return { ...p, wins, level: wins, losses: p.losses + (won ? 0 : 1), collection };
+      wins = p.wins + (won ? 1 : 0);
+      return { ...p, wins, level: wins, losses: p.losses + (won ? 0 : 1) };
     });
+    if (won && address) claimReward(address, WIN_COIN_REWARD);
+    if (won && LEVEL_MILESTONES.includes(wins)) {
+      const current = profileRef.current;
+      const [drop] = sampleSpecies(1, current?.collection.map((m) => m.species) ?? []);
+      if (drop) {
+        randomMember(drop).then((member) => {
+          member.shiny = rollShiny();
+          setProfile((p) => (p ? { ...p, collection: [...p.collection, member] } : p));
+          setReward(`${member.shiny ? '✨ SHINY ' : ''}Level ${wins}! New Pokémon: ${drop.name}`);
+        });
+      }
+    }
   }
 
   return (
@@ -236,13 +260,12 @@ export default function App() {
                 m.shiny = rollShiny();
               });
               const rest = members.slice(1);
-              const collection = members.map((m) => ({ species: m.species, shiny: !!m.shiny }));
               const expiresAt = Date.now() + RENTAL_DURATION_MS;
               setProfile((p) =>
                 p
                   ? {
                       ...p,
-                      collection,
+                      collection: members,
                       starterDraftDone: true,
                       rentals: rest.map((m) => ({ species: m.species, expiresAt })),
                       teams: p.teams.map((t, i) => (i === 0 ? { ...t, members } : t)),
@@ -260,10 +283,12 @@ export default function App() {
           <BuyPokemon
             collection={profile.collection}
             onBought={(species) => {
-              const shiny = rollShiny();
-              setProfile((p) =>
-                p ? { ...p, collection: [...p.collection, { species, shiny }] } : p,
-              );
+              const sp = getSpecies(species);
+              if (!sp) return;
+              randomMember(sp).then((member) => {
+                member.shiny = rollShiny();
+                setProfile((p) => (p ? { ...p, collection: [...p.collection, member] } : p));
+              });
             }}
             onBack={() => setScene({ name: 'town' })}
           />

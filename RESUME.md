@@ -23,11 +23,33 @@ wagering. This file is the "pick up where we left off" guide.
 
 - **Engine/data:** Pokémon Showdown via `@pkmn/sim` + `@pkmn/dex`. All 1025 Pokémon,
   accurate moves/types/abilities/legality, type chart, STAB, etc.
-- **Team builder:** 3 teams × 3 Pokémon, 4 legal moves each, ability/nature/item with
-  descriptions. Rules enforced: 4 moves, no duplicate Pokémon, no duplicate moves.
-- **Competitive ban list** (`src/data/bans.ts`): Uber/AG Pokémon + OHKO/evasion moves +
-  Moody/Shadow Tag/Arena Trap + evasion items. Shown as "BANNED", unselectable; server
-  rejects banned teams (`teamBanViolation`).
+- **Team builder:** 3 teams × 3 Pokémon. You only choose *which* owned species
+  fills a slot — ability, nature, item, and 4 moves are rolled once at
+  acquisition and locked forever (see below); the editor shows them read-only
+  with descriptions. Rules enforced: no duplicate Pokémon, no duplicate moves.
+- **Permanent random ability/nature/item/moves** (`randomMember()` in
+  `src/game/randomTeam.ts`): every Pokémon you ever get — starter draft, level
+  drops, the shop, rental rotation, CPU teams — rolls a *fair* (uniform-odds)
+  ability, nature, held item (or none, equally likely), and moveset the
+  moment it's acquired, then that's fixed forever; `TeamBuilder` can no longer
+  edit these fields at all. Moves guarantee 1-2 damaging picks (so nobody gets
+  a 4-Status dud) then fill the rest fairly from the full legal pool. Nothing
+  on the ban list (`src/data/bans.ts`) is ever rolled. `Profile.collection` is
+  now `TeamMember[]` (was `{species, shiny}[]`) so the full rolled record
+  persists; `loadProfile`'s migration backfills old shapes with blanks, and
+  `App.tsx`'s `repairProfile()` catches anything still incomplete on load and
+  rerolls it properly.
+- **Ban list** (`src/data/bans.ts`): no species is banned anymore — Legendaries
+  (Mythical/Restricted Legendary/Sub-Legendary, per `@pkmn/dex`'s own `tags`)
+  are capped at **1 per team** instead (`isLegendary`, enforced in
+  `teamBanViolation`; picker shows "★ LEGENDARY" and disables a 2nd pick once
+  the team has one). OHKO/evasion moves + Moody/Shadow Tag/Arena Trap +
+  evasion items are still banned outright. Server rejects violating teams
+  (`teamBanViolation`, same function used client + server side).
+- **Pokémon inventory** (`ResearchCenter.tsx`): below the 3 team cards, every
+  species in `profile.collection` is listed (sorted by dex #) with its
+  sprite, types, shiny/Legendary tags, rental countdown if still on loan, and
+  which team (if any) it's currently slotted into.
 - **8-bit shell:** title → character select (imported sprite roster in `public/trainers/`)
   → town → research center → battle stadium. Scenes in `src/App.tsx`.
 - **Modes:** 🌐 Online (FREE PvP, wallet-free) + SOL wager tiers (wallet required), and 🤖

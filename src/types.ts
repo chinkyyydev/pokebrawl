@@ -17,8 +17,10 @@ export function emptyMember(
   ability = '',
   moves: string[] = [],
   shiny = false,
+  nature = 'Hardy',
+  item = '',
 ): TeamMember {
-  return { species, ability, item: '', moves, nature: 'Hardy', shiny };
+  return { species, ability, item, moves, nature, shiny };
 }
 
 /** Convert our editable team member into the PokemonSet shape the sim expects. */

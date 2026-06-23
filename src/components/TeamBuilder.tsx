@@ -1,19 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import {
-  allItems,
-  allNatures,
-  allSpecies,
-  legalMoves,
-  speciesAbilities,
-  type MoveLite,
-  type SpeciesLite,
-} from '../data/pokedex';
-import { emptyMember, type Team, type TeamMember } from '../types';
-import { teamProblem, type CollectionEntry, type Rental } from '../state/storage';
+import { useMemo, useState } from 'react';
+import { allNatures, allSpecies, getAbility, getItem, getMove, type SpeciesLite } from '../data/pokedex';
+import { type Team, type TeamMember } from '../types';
+import { teamProblem, type Rental } from '../state/storage';
 import { monSprite } from '../data/sprites';
 import { PokemonPicker } from './PokemonPicker';
-import { MovePicker } from './MovePicker';
-import { isAbilityBanned, isItemBanned } from '../data/bans';
+import { isLegendary } from '../data/bans';
 
 function hoursLeft(expiresAt: number): number {
   return Math.max(0, Math.ceil((expiresAt - Date.now()) / 3_600_000));
@@ -30,7 +21,7 @@ export function TeamBuilder({
 }: {
   team: Team;
   teamName: string;
-  collection: CollectionEntry[]; // owned species — the only ones pickable here
+  collection: TeamMember[]; // every Pokémon ever acquired — the only ones pickable here
   rentals: Rental[]; // currently-on-loan species (subset of collection)
   onChange: (team: Team) => void;
   onRename: (name: string) => void;
@@ -38,44 +29,19 @@ export function TeamBuilder({
 }) {
   const [slot, setSlot] = useState(0);
   const [picking, setPicking] = useState(team.every((m) => !m)); // open picker if empty
-  const [moveCache, setMoveCache] = useState<Record<string, MoveLite[]>>({});
-  const [loadingMoves, setLoadingMoves] = useState(false);
 
   const member = team[slot];
 
-  useEffect(() => {
-    if (!member || moveCache[member.species]) return;
-    let cancelled = false;
-    setLoadingMoves(true);
-    legalMoves(member.species).then((moves) => {
-      if (cancelled) return;
-      setMoveCache((c) => ({ ...c, [member.species]: moves }));
-      setLoadingMoves(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [member?.species]);
-
-  function update(next: TeamMember) {
-    const copy = team.slice();
-    copy[slot] = next;
-    onChange(copy);
-  }
-
+  // Ability/nature/item/moves are rolled once and fixed forever the moment a
+  // Pokémon is acquired (see randomMember()) — picking a species here just
+  // copies that already-complete record into the slot, nothing to generate.
   function pickSpecies(s: SpeciesLite) {
-    const shiny = shinyMap.get(s.name.toLowerCase()) ?? false;
+    const owned = collection.find((m) => m.species.toLowerCase() === s.name.toLowerCase());
+    if (!owned) return;
     const copy = team.slice();
-    copy[slot] = emptyMember(s.name, s.abilities[0] ?? '', [], shiny);
+    copy[slot] = { ...owned };
     onChange(copy);
     setPicking(false);
-  }
-
-  function setMove(i: number, name: string) {
-    if (!member) return;
-    const moves = member.moves.slice();
-    moves[i] = name;
-    update({ ...member, moves });
   }
 
   function clearSlot() {
@@ -93,28 +59,24 @@ export function TeamBuilder({
       .map((m) => m.species.toLowerCase()),
   );
   const problem = teamProblem({ name: teamName, members: team });
-  const shinyMap = useMemo(
-    () => new Map(collection.map((e) => [e.species.toLowerCase(), e.shiny])),
-    [collection],
-  );
   const shinySpecies = useMemo(
-    () => new Set(collection.filter((e) => e.shiny).map((e) => e.species.toLowerCase())),
+    () => new Set(collection.filter((m) => m.shiny).map((m) => m.species.toLowerCase())),
     [collection],
   );
   const ownedPool = useMemo(() => {
-    const owned = new Set(collection.map((e) => e.species.toLowerCase()));
+    const owned = new Set(collection.map((m) => m.species.toLowerCase()));
     return allSpecies().filter((s) => owned.has(s.name.toLowerCase()));
   }, [collection]);
+  // Another slot already holds the team's one allowed Legendary.
+  const legendaryLimitReached = team.some(
+    (m, i) => !!m && i !== slot && isLegendary(m.species),
+  );
   const memberRental = member
     ? rentals.find((r) => r.species.toLowerCase() === member.species.toLowerCase())
     : undefined;
-  const speciesMoves = member ? moveCache[member.species] ?? [] : [];
-  const abilityList = member ? speciesAbilities(member.species) : [];
-  const natures = allNatures();
-  const items = member ? allItems(member.species) : [];
-  const currentAbility = abilityList.find((a) => a.name === member?.ability);
-  const currentNature = natures.find((n) => n.name === member?.nature);
-  const currentItem = items.find((it) => it.name === member?.item);
+  const abilityInfo = member ? getAbility(member.ability) : null;
+  const natureInfo = member ? allNatures().find((n) => n.name === member.nature) : null;
+  const itemInfo = member?.item ? getItem(member.item) : null;
 
   return (
     <div className="builder">
@@ -145,6 +107,7 @@ export function TeamBuilder({
               <span className="slot-name">
                 {m ? m.species : 'Empty'}
                 {m?.shiny && <span className="shiny-tag">✨</span>}
+                {m && isLegendary(m.species) && <span className="legendary-tag">★</span>}
               </span>
               {m && (
                 <span className="slot-moves">
@@ -166,6 +129,7 @@ export function TeamBuilder({
             exclude={usedSpecies}
             pool={ownedPool}
             shinySpecies={shinySpecies}
+            legendaryLimitReached={legendaryLimitReached}
           />
         ) : (
           <div className="editor">
@@ -173,6 +137,9 @@ export function TeamBuilder({
               <h2>
                 {member.species}
                 {member.shiny && <span className="shiny-tag">✨ Shiny</span>}
+                {isLegendary(member.species) && (
+                  <span className="legendary-tag">★ Legendary</span>
+                )}
               </h2>
               <div className="editor-actions">
                 <button onClick={() => setPicking(true)}>Change Pokémon</button>
@@ -187,83 +154,53 @@ export function TeamBuilder({
                 {hoursLeft(memberRental.expiresAt)}h.
               </p>
             )}
+            <p className="desc muted">
+              Ability, nature, item, and moves are rolled once when a Pokémon is
+              caught and locked in for good — they can't be changed.
+            </p>
 
             <div className="editor-grid">
-              <label>
-                Ability
-                <select
-                  value={member.ability}
-                  onChange={(e) => update({ ...member, ability: e.target.value })}
-                >
-                  {abilityList.map((a) => {
-                    const banned = isAbilityBanned(a.name);
-                    return (
-                      <option key={a.id} value={a.name} disabled={banned}>
-                        {a.name}
-                        {banned ? ' — BANNED' : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-                {currentAbility && (
-                  <p className="desc">{currentAbility.shortDesc || 'No description available.'}</p>
-                )}
-              </label>
+              <div className="fixed-field">
+                <span className="fixed-label">Ability</span>
+                <span className="fixed-value">{member.ability || '—'}</span>
+                {abilityInfo && <p className="desc">{abilityInfo.shortDesc}</p>}
+              </div>
 
-              <label>
-                Nature
-                <select
-                  value={member.nature}
-                  onChange={(e) => update({ ...member, nature: e.target.value })}
-                >
-                  {natures.map((n) => (
-                    <option key={n.id} value={n.name}>
-                      {n.name} — {n.desc}
-                    </option>
-                  ))}
-                </select>
-                {currentNature && <p className="desc">{currentNature.desc}</p>}
-              </label>
+              <div className="fixed-field">
+                <span className="fixed-label">Nature</span>
+                <span className="fixed-value">{member.nature}</span>
+                {natureInfo && <p className="desc">{natureInfo.desc}</p>}
+              </div>
 
-              <label className="span-2">
-                Item (optional)
-                <select
-                  value={member.item}
-                  onChange={(e) => update({ ...member, item: e.target.value })}
-                >
-                  <option value="">— none —</option>
-                  {items.map((it) => {
-                    const banned = isItemBanned(it.name);
-                    return (
-                      <option key={it.id} value={it.name} disabled={banned}>
-                        {it.name}
-                        {banned ? ' — BANNED' : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-                {currentItem ? (
-                  <p className="desc">{currentItem.shortDesc || 'No description available.'}</p>
-                ) : (
-                  <p className="desc">No item held. Capped at Lv. 100 — same for every Pokémon.</p>
-                )}
-              </label>
+              <div className="fixed-field span-2">
+                <span className="fixed-label">Item</span>
+                <span className="fixed-value">{member.item || 'None held'}</span>
+                <p className="desc">
+                  {itemInfo?.shortDesc || (member.item ? 'No description available.' : 'Capped at Lv. 100 — same for every Pokémon.')}
+                </p>
+              </div>
             </div>
 
-            <h3>
-              Moves {loadingMoves && <span className="muted">(loading legal moves…)</span>}
-            </h3>
+            <h3>Moves</h3>
             <div className="move-grid">
-              {[0, 1, 2, 3].map((i) => (
-                <MovePicker
-                  key={i}
-                  moves={speciesMoves}
-                  value={member.moves[i] ?? ''}
-                  onChange={(name) => setMove(i, name)}
-                  disabled={loadingMoves}
-                  taken={new Set(member.moves.filter((mv, j): mv is string => !!mv && j !== i))}
-                />
-              ))}
+              {member.moves.map((name, i) => {
+                const move = getMove(name);
+                return (
+                  <div key={i} className="fixed-field move-display">
+                    <span className="fixed-value">{name}</span>
+                    {move && (
+                      <p className="desc">
+                        <span className="desc-meta">
+                          {move.type} · {move.category} ·{' '}
+                          {move.category === 'Status' ? '—' : `${move.basePower || '—'} BP`} ·{' '}
+                          Acc {move.accuracy === true ? '∞' : `${move.accuracy}%`} · {move.pp} PP
+                        </span>
+                        {move.shortDesc || 'No description available.'}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

@@ -1,14 +1,20 @@
-// Competitive ban list, based on Smogon's standard singles rules.
-// Nothing is deleted from the game — these just can't be selected in the team
-// builder (they show a "BANNED" tag), the same idea as Smogon's clauses.
+// Competitive ban list, based on Smogon's standard singles rules — except for
+// species: every Pokémon is selectable, with Legendaries capped at 1 per team
+// (see teamBanViolation) instead of being unselectable like Smogon's actual
+// Uber/AG bans.
 //
-// Sources: Smogon clauses (OHKO, Evasion, Species) + standard OU banlist.
+// Sources: Smogon clauses (OHKO, Evasion) + standard OU banlist.
 import { Dex, toID } from '@pkmn/dex';
 
-// --- Pokémon: Smogon's Uber + Anything-Goes tiers are too strong for standard play.
-export function isSpeciesBanned(name: string): boolean {
-  const tier = Dex.species.get(name).tier;
-  return tier === 'Uber' || tier === 'AG';
+// --- Pokémon: no species is outright banned — every Pokémon is selectable.
+// Legendaries (Mythical / Restricted Legendary / Sub-Legendary, per @pkmn/dex's
+// own classification) are still powerful enough to warrant a limit, so
+// they're capped at 1 per team instead (see teamBanViolation below) rather
+// than being unselectable.
+const LEGENDARY_TAGS = new Set(['Mythical', 'Restricted Legendary', 'Sub-Legendary']);
+export function isLegendary(name: string): boolean {
+  const tags = Dex.species.get(name).tags ?? [];
+  return tags.some((t) => LEGENDARY_TAGS.has(t));
 }
 
 // --- Moves: OHKO Clause + Evasion Clause + a few individually-banned staples.
@@ -49,8 +55,9 @@ export interface BannableMember {
   moves: (string | undefined)[];
 }
 export function teamBanViolation(members: BannableMember[]): string | null {
+  const legendaries = members.filter((m) => isLegendary(m.species));
+  if (legendaries.length > 1) return 'Only 1 Legendary allowed per team';
   for (const m of members) {
-    if (isSpeciesBanned(m.species)) return `${m.species} is banned`;
     if (m.ability && isAbilityBanned(m.ability)) {
       return `${m.species}'s ability ${m.ability} is banned`;
     }

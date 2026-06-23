@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { allSpecies, type SpeciesLite } from '../data/pokedex';
 import { monSprite } from '../data/sprites';
-import { isSpeciesBanned } from '../data/bans';
+import { isLegendary } from '../data/bans';
 
 const TYPE_NULL = '—';
 
@@ -11,12 +11,14 @@ export function PokemonPicker({
   pool,
   searchable = true,
   shinySpecies,
+  legendaryLimitReached,
 }: {
   onPick: (s: SpeciesLite) => void;
   exclude?: Set<string>; // lowercased species names already on the team
   pool?: SpeciesLite[]; // restrict choices to this set (default: all 1025)
   searchable?: boolean; // hide the search box for small fixed pools (drafts)
   shinySpecies?: Set<string>; // lowercased species names the player owns shiny
+  legendaryLimitReached?: boolean; // team already has its 1 Legendary — disable more
 }) {
   const [q, setQ] = useState('');
 
@@ -45,13 +47,14 @@ export function PokemonPicker({
       )}
       <div className="picker-list">
         {list.map((s) => {
-          const banned = isSpeciesBanned(s.name);
+          const legendary = isLegendary(s.name);
+          const locked = legendary && !!legendaryLimitReached;
           const shiny = shinySpecies?.has(s.name.toLowerCase());
           return (
             <button
               key={s.id}
-              className={`picker-row ${banned ? 'banned' : ''}`}
-              disabled={banned}
+              className={`picker-row ${locked ? 'banned' : ''}`}
+              disabled={locked}
               onClick={() => onPick(s)}
             >
               <img
@@ -64,7 +67,11 @@ export function PokemonPicker({
               <span className="dex-name">
                 {s.name}
                 {shiny && <span className="shiny-tag">✨</span>}
-                {banned && <span className="ban-tag">BANNED</span>}
+                {legendary && (
+                  <span className="legendary-tag">
+                    ★ LEGENDARY{locked ? ' — limit reached' : ''}
+                  </span>
+                )}
               </span>
               <span className="dex-types">
                 {s.types.map((t) => (
