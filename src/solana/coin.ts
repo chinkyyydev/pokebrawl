@@ -12,6 +12,7 @@ import {
   getAccount,
   TokenAccountNotFoundError,
 } from '@solana/spl-token';
+import { API_URL } from '../net/client';
 
 // TODO: replace once create-coin-mint.mts finishes (blocked on devnet faucet
 // rate-limit as of this writing — see RESUME.md).
@@ -49,10 +50,6 @@ export async function buildBurnTx(address: string, amount: number): Promise<Tran
   tx.feePayer = owner;
   return tx;
 }
-
-const API_URL =
-  (import.meta.env.VITE_API_URL as string) ||
-  (import.meta.env.DEV ? 'http://localhost:8080' : `${location.protocol}//${location.host}`);
 
 /** Ask the server to mint a reward grant to `wallet` (welcome grant, win
  * reward). The server holds the mint authority; minting needs its signature,

@@ -3,21 +3,15 @@ import { TRAINERS, DEFAULT_TRAINER } from '../data/trainers';
 import { TrainerSprite } from './TrainerSprite';
 import { DialogBox } from './DialogBox';
 
-const MAX_NAME = 12;
-
-export function CharacterCreate({
-  onCreate,
-}: {
-  onCreate: (name: string, trainer: string) => void;
-}) {
-  const [name, setName] = useState('');
+/** Trainer-sprite picker, shown once right after a brand-new account's first
+ * sign-up (the trainer's name is the account username, set at sign-up). */
+export function CharacterCreate({ onCreate }: { onCreate: (trainer: string) => void }) {
   const [trainer, setTrainer] = useState(DEFAULT_TRAINER);
-  const clean = name.trim();
 
   return (
     <div className="scene create-scene">
       <DialogBox speaker="PROF. OAK">
-        Choose your trainer and tell me your name, and your POKéMON journey will begin!
+        Choose your trainer, and your POKéMON journey will begin!
       </DialogBox>
 
       <div className="creator">
@@ -26,19 +20,7 @@ export function CharacterCreate({
             <TrainerSprite id={trainer} size={150} animated />
           </div>
 
-          <label className="field">
-            YOUR NAME
-            <input
-              className="retro-input"
-              maxLength={MAX_NAME}
-              value={name}
-              placeholder="ENTER NAME"
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-            />
-          </label>
-
-          <button className="press-start" disabled={!clean} onClick={() => onCreate(clean, trainer)}>
+          <button className="press-start" onClick={() => onCreate(trainer)}>
             CONFIRM ▶
           </button>
         </div>

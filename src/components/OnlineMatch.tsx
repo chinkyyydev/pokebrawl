@@ -5,6 +5,7 @@ import type { BattleStateMsg, ServerMsg } from '../net/protocol';
 import { Combatant, BattleControls, type Fx } from './BattleField';
 import { DialogBox } from './DialogBox';
 import { useWallet } from '../solana/wallet';
+import { useAuth } from '../state/auth';
 
 type Phase = 'connecting' | 'queued' | 'battle' | 'error';
 
@@ -15,13 +16,11 @@ function fmtClock(ms: number): string {
 }
 
 export function OnlineMatch({
-  name,
   stake,
   members,
   onResult,
   onExit,
 }: {
-  name: string;
   stake: number;
   members: Team;
   onResult?: (won: boolean) => void;
@@ -34,6 +33,7 @@ export function OnlineMatch({
   const logBoxRef = useRef<HTMLDivElement | null>(null);
 
   const { address } = useWallet();
+  const { token } = useAuth();
   const [phase, setPhase] = useState<Phase>('connecting');
   const [opponent, setOpponent] = useState('');
   const [state, setState] = useState<BattleStateMsg | null>(null);
@@ -57,7 +57,7 @@ export function OnlineMatch({
 
     const client = new NetClient(WS_URL, {
       onOpen: () => {
-        client.send({ type: 'queue', stake, name, wallet: address ?? '', team });
+        client.send({ type: 'queue', stake, token: token ?? '', wallet: address ?? '', team });
         setPhase('queued');
       },
       onMessage: handleMessage,

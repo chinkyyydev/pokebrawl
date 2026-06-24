@@ -88,7 +88,7 @@ export function Town({
 
       <div className="town-foot">
         <button className="link-btn" onClick={onReset}>
-          Change character
+          Log out
         </button>
       </div>
     </div>

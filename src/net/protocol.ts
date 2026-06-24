@@ -27,7 +27,7 @@ export interface BattleStateMsg {
 }
 
 export type ClientMsg =
-  | { type: 'queue'; stake: number; name: string; wallet: string; team: PokemonSet[] }
+  | { type: 'queue'; stake: number; token: string; wallet: string; team: PokemonSet[] }
   | { type: 'cancel' }
   | { type: 'choice'; choice: string }
   | { type: 'leave' };

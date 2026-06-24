@@ -10,6 +10,11 @@ export const WS_URL =
     ? 'ws://localhost:8080'
     : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
 
+/** Same origin logic as WS_URL, but for plain HTTP API calls (auth, coin). */
+export const API_URL =
+  (import.meta.env.VITE_API_URL as string) ||
+  (import.meta.env.DEV ? 'http://localhost:8080' : `${location.protocol}//${location.host}`);
+
 /** Thin browser WebSocket wrapper that speaks our typed protocol. */
 export class NetClient {
   private ws: WebSocket;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PokemonSet } from '@pkmn/sim';
 import { TitleScreen } from './components/TitleScreen';
 import { CharacterCreate } from './components/CharacterCreate';
+import { AuthScreen } from './components/AuthScreen';
 import { Town } from './components/Town';
 import { ResearchCenter } from './components/ResearchCenter';
 import { TeamBuilder } from './components/TeamBuilder';
@@ -16,11 +17,9 @@ import { getSpecies } from './data/pokedex';
 import { toPokemonSet, type Team, type TeamMember } from './types';
 import { useWallet } from './solana/wallet';
 import { claimReward } from './solana/coin';
+import { useAuth } from './state/auth';
+import { fetchProfile, pushProfile } from './state/profileApi';
 import {
-  clearProfile,
-  createProfile,
-  loadProfile,
-  saveProfile,
   LEVEL_MILESTONES,
   WIN_COIN_REWARD,
   WELCOME_COIN_GRANT,
@@ -89,6 +88,7 @@ async function repairProfile(p: Profile): Promise<Profile> {
 
 type Scene =
   | { name: 'title' }
+  | { name: 'auth'; wallet?: string }
   | { name: 'create' }
   | { name: 'town' }
   | { name: 'starterDraft' }
@@ -108,10 +108,12 @@ function setsFrom(members: Team): PokemonSet[] {
 
 const SCENE_KEY = 'pokemon1v1:scene';
 
-// Restore the last navigation scene on refresh. Battle/online scenes can't be
-// resumed (their state lives on the server / in memory), so they fall back to town.
-function restoreScene(profile: Profile | null): Scene {
-  if (!profile) return { name: 'title' };
+// Where to land a player who already has a Profile (existing account,
+// resumed session, or a screen transition that already has a fresh profile
+// in hand — login, signup, wallet-login). Battle/online scenes can't be
+// resumed (their state lives on the server / in memory), so those — and a
+// brand-new account's missing starter draft — fall back accordingly.
+function restoreScene(profile: Profile): Scene {
   if (!profile.starterDraftDone) return { name: 'starterDraft' };
   try {
     const raw = localStorage.getItem(SCENE_KEY);
@@ -134,17 +136,57 @@ function restoreScene(profile: Profile | null): Scene {
 }
 
 export default function App() {
-  const [profile, setProfile] = useState<Profile | null>(() => loadProfile());
-  const [scene, setScene] = useState<Scene>(() => restoreScene(profile));
+  const { token, logout, walletLogin } = useAuth();
   const { address } = useWallet();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [scene, setScene] = useState<Scene>({ name: 'title' });
   const [reward, setReward] = useState<string | null>(null); // "Level 10! New Pokémon: X"
   const profileRef = useRef(profile);
   profileRef.current = profile;
+  const triedWalletLogin = useRef(false);
 
-  // Persist on every profile change. Swap this for wallet/backend later.
+  // Resume an existing session once, on mount, if a token is already saved
+  // (returning visitor / page refresh). Explicit auth flows (sign-up, login,
+  // wallet-login) set profile/scene directly from their own response instead
+  // of going through this, so this only ever runs the one time.
   useEffect(() => {
-    if (profile) saveProfile(profile);
-  }, [profile]);
+    if (!token) return;
+    let cancelled = false;
+    fetchProfile(token).then((p) => {
+      if (cancelled) return;
+      if (!p) {
+        logout(); // stale/invalid token
+        return;
+      }
+      setProfile(p);
+      setScene((s) => (s.name === 'title' ? restoreScene(p) : s));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A connected wallet with no account yet gets offered a one-time username
+  // claim; a wallet that already has an account just logs straight in. Only
+  // fires while signed out — doesn't touch an existing password session.
+  useEffect(() => {
+    if (!address || token || triedWalletLogin.current) return;
+    triedWalletLogin.current = true;
+    walletLogin(address).then((result) => {
+      if (result.needsUsername) {
+        setScene({ name: 'auth', wallet: address });
+      } else if (result.ok && result.profile) {
+        setProfile(result.profile);
+        setScene(restoreScene(result.profile));
+      }
+    });
+  }, [address, token]);
+
+  // Push to the server on every profile change.
+  useEffect(() => {
+    if (profile && token) pushProfile(token, profile);
+  }, [profile, token]);
 
   // Catch rental expiries + legacy data repair: once immediately (covers
   // time passed while the tab was closed) and every 60s while it stays open.
@@ -172,7 +214,7 @@ export default function App() {
         ? { name: 'builder', teamIndex: scene.teamIndex }
         : scene.name === 'research' || scene.name === 'lobby' || scene.name === 'town'
           ? { name: scene.name }
-          : { name: 'town' }; // battle/online/loading/title/create -> town on refresh
+          : { name: 'town' }; // battle/online/loading/title/auth/create -> town on refresh
     try {
       localStorage.setItem(SCENE_KEY, JSON.stringify(persist));
     } catch {
@@ -235,7 +277,19 @@ export default function App() {
     if (scene.name === 'title') {
       return (
         <TitleScreen
-          onStart={() => setScene(profile ? { name: 'town' } : { name: 'create' })}
+          onStart={() => setScene(profile ? restoreScene(profile) : { name: 'auth' })}
+        />
+      );
+    }
+
+    if (scene.name === 'auth') {
+      return (
+        <AuthScreen
+          wallet={scene.wallet}
+          onAuthed={(p, isNewAccount) => {
+            setProfile(p);
+            setScene(isNewAccount ? { name: 'create' } : restoreScene(p));
+          }}
         />
       );
     }
@@ -243,8 +297,8 @@ export default function App() {
     if (scene.name === 'create' || !profile) {
       return (
         <CharacterCreate
-          onCreate={(name, trainer) => {
-            setProfile(createProfile(name, trainer));
+          onCreate={(trainer) => {
+            setProfile((p) => (p ? { ...p, trainer } : p));
             setScene({ name: 'starterDraft' });
           }}
         />
@@ -304,9 +358,9 @@ export default function App() {
             onBattle={() => setScene({ name: 'lobby' })}
             onBuy={() => setScene({ name: 'buyPokemon' })}
             onReset={() => {
-              clearProfile();
+              logout();
               setProfile(null);
-              setScene({ name: 'create' });
+              setScene({ name: 'title' });
             }}
           />
         );
@@ -362,7 +416,6 @@ export default function App() {
       case 'online':
         return (
           <OnlineMatch
-            name={profile.name}
             stake={scene.stake}
             members={scene.members}
             onResult={recordResult}

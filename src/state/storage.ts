@@ -2,9 +2,12 @@ import type { Team, TeamMember } from '../types';
 import { DEFAULT_TRAINER, TRAINERS } from '../data/trainers';
 import { teamBanViolation } from '../data/bans';
 
-// A trainer profile and their saved teams. Persisted to localStorage for now;
-// when wallet/account auth lands, swap the KEY for the wallet address and move
-// load/save to the backend — nothing else in the app needs to change.
+// A trainer profile and their saved teams — persisted server-side (Postgres,
+// via server/db.ts), keyed by account. This file is imported by BOTH the
+// client and the server (server/index.ts uses createProfile), so it must
+// stay free of browser-only imports (fetch/localStorage/import.meta.env) —
+// see src/state/profileApi.ts for the client-side fetch/push calls, and
+// src/state/auth.tsx for sign-up/login/session-token handling.
 
 export const TEAM_SLOTS = 3; // each player has 3 team slots
 export const PARTY_SIZE = 3; // each team is 3 Pokémon
@@ -49,8 +52,6 @@ export interface Profile {
   rentals: Rental[]; // currently-on-loan species (subset of collection)
 }
 
-const KEY = 'pokemon1v1:profile';
-
 function emptyMembers(): Team {
   return Array.from({ length: PARTY_SIZE }, () => null);
 }
@@ -78,59 +79,40 @@ export function createProfile(name: string, trainer: string): Profile {
   };
 }
 
-export function loadProfile(): Profile | null {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const p = JSON.parse(raw) as Profile;
-    if (!p?.name || !Array.isArray(p.teams)) return null;
-    // Repair shape (in case the schema grew since this profile was saved).
-    while (p.teams.length < TEAM_SLOTS) {
-      p.teams.push({ name: `Team ${p.teams.length + 1}`, members: emptyMembers() });
+/** Defensively repairs a Profile's shape in case the schema grew or an older
+ * save (e.g. pre-account localStorage data) has a stale structure. */
+export function repairProfileShape(p: Profile): Profile {
+  while (p.teams.length < TEAM_SLOTS) {
+    p.teams.push({ name: `Team ${p.teams.length + 1}`, members: emptyMembers() });
+  }
+  p.teams.forEach((t) => {
+    // Normalize to exactly PARTY_SIZE slots (handles older 6-slot saves).
+    t.members = t.members.slice(0, PARTY_SIZE);
+    while (t.members.length < PARTY_SIZE) t.members.push(null);
+  });
+  if (typeof p.activeTeam !== 'number') p.activeTeam = 0;
+  if (!p.trainer || !TRAINERS.some((t) => t.id === p.trainer)) p.trainer = DEFAULT_TRAINER;
+  if (typeof p.wins !== 'number') p.wins = 0;
+  if (typeof p.losses !== 'number') p.losses = 0;
+  if (typeof p.level !== 'number') p.level = p.wins;
+  if (!Array.isArray(p.collection)) p.collection = [];
+  // Migrate older saves: collection used to be string[] of species names,
+  // then { species, shiny }[]. Normalize whatever shape shows up into a
+  // (possibly incomplete) TeamMember — App.tsx's repairProfile() fills in
+  // any missing ability/nature/item/moves with a fresh random roll.
+  p.collection = (p.collection as unknown[]).map((raw) => {
+    const e = raw as { species: string; shiny?: boolean; ability?: string };
+    if (typeof raw === 'string') {
+      return { species: raw, ability: '', item: '', moves: [], nature: 'Hardy', shiny: false };
     }
-    p.teams.forEach((t) => {
-      // Normalize to exactly PARTY_SIZE slots (handles older 6-slot saves).
-      t.members = t.members.slice(0, PARTY_SIZE);
-      while (t.members.length < PARTY_SIZE) t.members.push(null);
-    });
-    if (typeof p.activeTeam !== 'number') p.activeTeam = 0;
-    if (!p.trainer || !TRAINERS.some((t) => t.id === p.trainer)) p.trainer = DEFAULT_TRAINER;
-    if (typeof p.wins !== 'number') p.wins = 0;
-    if (typeof p.losses !== 'number') p.losses = 0;
-    if (typeof p.level !== 'number') p.level = p.wins;
-    if (!Array.isArray(p.collection)) p.collection = [];
-    // Migrate older saves: collection used to be string[] of species names,
-    // then { species, shiny }[]. Normalize whatever shape shows up into a
-    // (possibly incomplete) TeamMember — App.tsx's repairProfile() fills in
-    // any missing ability/nature/item/moves with a fresh random roll.
-    p.collection = (p.collection as unknown[]).map((raw) => {
-      const e = raw as { species: string; shiny?: boolean; ability?: string };
-      if (typeof raw === 'string') {
-        return { species: raw, ability: '', item: '', moves: [], nature: 'Hardy', shiny: false };
-      }
-      if (!('ability' in e)) {
-        return { species: e.species, ability: '', item: '', moves: [], nature: 'Hardy', shiny: !!e.shiny };
-      }
-      return e as TeamMember;
-    });
-    if (typeof p.starterDraftDone !== 'boolean') p.starterDraftDone = p.collection.length > 0;
-    if (!Array.isArray(p.rentals)) p.rentals = [];
-    return p;
-  } catch {
-    return null;
-  }
-}
-
-export function saveProfile(p: Profile): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(p));
-  } catch {
-    // storage full / disabled — non-fatal for now
-  }
-}
-
-export function clearProfile(): void {
-  localStorage.removeItem(KEY);
+    if (!('ability' in e)) {
+      return { species: e.species, ability: '', item: '', moves: [], nature: 'Hardy', shiny: !!e.shiny };
+    }
+    return e as TeamMember;
+  });
+  if (typeof p.starterDraftDone !== 'boolean') p.starterDraftDone = p.collection.length > 0;
+  if (!Array.isArray(p.rentals)) p.rentals = [];
+  return p;
 }
 
 /**

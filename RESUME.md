@@ -17,10 +17,55 @@ wagering. This file is the "pick up where we left off" guide.
    - `npm run dev` → game at http://localhost:5173
    - `npm run server` → battle server at ws://localhost:8080 (needed for online play)
 5. Typecheck/build: `npx tsc --noEmit -p tsconfig.json` and `npm run build`.
+   (Note: this only covers `src/` — `server/` isn't in `tsconfig.json`'s
+   `include`, so `tsx` runs it untyped. Lean on actually running
+   `npm run server` to catch issues there.)
 6. Deploy = just `git push` (Render auto-redeploys from `main`).
+7. Copy `.env.example` to `.env` and fill in `DATABASE_URL`/`JWT_SECRET` for
+   accounts to work locally — see "Accounts" below.
 
 ## What's built
 
+- **Accounts** (username/password or Phantom wallet, server-backed saves):
+  sign up at `/api/signup`, log in at `/api/login`, wallet players hit
+  `/api/wallet-login` (auto-login if their wallet has an account, otherwise
+  prompts a one-time username claim — same `/api/signup` under the hood).
+  Usernames are globally unique (case-insensitive) across *both* paths, and
+  capped at `MAX_ACCOUNTS_PER_IP` (4) signups per IP — all enforced in
+  `server/auth.ts` + `server/db.ts`. The whole `Profile` (teams/collection/
+  coins/wins) now lives in Postgres as JSONB, keyed by account
+  (`server/schema.sql`), fetched/pushed via `GET`/`PUT /api/profile`
+  (Bearer token) — see `src/state/profileApi.ts` (client) and `src/state/
+  auth.tsx` (`AuthProvider`/`useAuth`, holds the session token). Online
+  matchmaking (`queue` over the WebSocket) now carries that token instead of
+  a client-asserted name, so nobody can claim to be someone else mid-match
+  (`server/index.ts`'s `case 'queue'`).
+  **Database is live** — Neon Postgres, schema applied, working `.env`
+  locally with `DATABASE_URL`/`JWT_SECRET`. Full flow verified end-to-end
+  against the real DB: signup, duplicate-username rejection (case-
+  insensitive), login + wrong-password rejection, wallet-login claim +
+  auto-relogin, cross-namespace username collision (wallet account blocks a
+  password signup with the same name and vice versa), the 4-accounts-per-IP
+  cap, `GET`/`PUT /api/profile` round-tripping, and a full browser run
+  (sign up → pick trainer → starter draft → Town → **page refresh resumes
+  the same account**, not back at login). Passwords confirmed bcrypt-hashed
+  in the DB, never plaintext.
+  ### ⚠️ Outstanding: Render doesn't have the env vars yet
+  `DATABASE_URL`/`JWT_SECRET` only exist in the local (gitignored) `.env` so
+  far. Before deploying this, set both in Render's dashboard (already
+  declared `sync: false` in `render.yaml` so they won't get overwritten by a
+  blueprint sync) — **same values as the local `.env`** for `JWT_SECRET`
+  (must match for tokens issued by one environment to verify in the other if
+  you ever point both at the same DB), and the same Neon `DATABASE_URL`.
+  Until that's set, signup/login/profile calls on the live site will fail
+  soft with a 500 (verified non-fatal — doesn't crash the server) — the rest
+  of the game is unaffected either way.
+  ### Explicitly not done (see plan, ask before doing)
+  - No password reset (no email collection) — a lost password means a new
+    account for now.
+  - No migration of old localStorage-only profiles into accounts — existing
+    local saves (including dev/test ones) need a fresh sign-up.
+  - No login rate-limiting.
 - **Engine/data:** Pokémon Showdown via `@pkmn/sim` + `@pkmn/dex`. All 1025 Pokémon,
   accurate moves/types/abilities/legality, type chart, STAB, etc.
 - **Team builder:** 3 teams × 3 Pokémon. You only choose *which* owned species

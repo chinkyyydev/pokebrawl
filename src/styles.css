@@ -246,12 +246,17 @@ select {
   line-height: 1.35;
 }
 
-/* ---------- Character create ---------- */
-.create-form {
+/* ---------- Character create / auth ---------- */
+.create-form,
+.auth-form {
   display: flex;
   flex-direction: column;
   gap: 18px;
   align-items: flex-start;
+  max-width: 360px;
+}
+.error {
+  color: var(--red);
 }
 .field {
   display: flex;

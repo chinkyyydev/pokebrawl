@@ -18,3 +18,10 @@ services:
         sync: false
       - key: COIN_MINT_ADDRESS
         sync: false
+      # Accounts (server/schema.sql) — Postgres connection string (Neon, etc.)
+      # and the secret that signs session tokens. Set both in the Render
+      # dashboard, NOT here.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
