@@ -246,6 +246,82 @@ select {
   line-height: 1.35;
 }
 
+/* ---------- Info icons (Rules / About Dev) + popup modal ---------- */
+.info-icons {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 50;
+}
+.info-icons button {
+  width: 44px;
+  height: 44px;
+  font-size: 1.3rem;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+.modal-panel {
+  background: var(--screen);
+  border: 4px solid var(--border);
+  box-shadow: 0 0 0 4px var(--shadow), 0 10px 30px rgba(0, 0, 0, 0.6);
+  max-width: 640px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 18px;
+}
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.modal-head h2 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--gold);
+}
+.modal-close {
+  background: var(--red);
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 4px;
+}
+.rules-content h3 {
+  font-size: 0.75rem;
+  color: var(--gold);
+  margin: 16px 0 4px;
+}
+.rules-content h3:first-child {
+  margin-top: 0;
+}
+.rules-content p {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  line-height: 1.4;
+}
+.rules-content a {
+  color: var(--blue);
+}
+
 /* ---------- Character create / auth ---------- */
 .create-form,
 .auth-form {

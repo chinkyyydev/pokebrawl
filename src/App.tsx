@@ -3,6 +3,10 @@ import type { PokemonSet } from '@pkmn/sim';
 import { TitleScreen } from './components/TitleScreen';
 import { CharacterCreate } from './components/CharacterCreate';
 import { AuthScreen } from './components/AuthScreen';
+import { RulesScene } from './components/RulesScene';
+import { RulesContent } from './components/RulesContent';
+import { AboutDevContent } from './components/AboutDevContent';
+import { Modal } from './components/Modal';
 import { Town } from './components/Town';
 import { ResearchCenter } from './components/ResearchCenter';
 import { TeamBuilder } from './components/TeamBuilder';
@@ -82,6 +86,7 @@ async function repairProfile(p: Profile): Promise<Profile> {
 type Scene =
   | { name: 'title' }
   | { name: 'auth'; wallet?: string }
+  | { name: 'rules' }
   | { name: 'create' }
   | { name: 'town' }
   | { name: 'starterDraft' }
@@ -134,6 +139,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [scene, setScene] = useState<Scene>({ name: 'title' });
   const [reward, setReward] = useState<string | null>(null); // "Level 10! New Pokémon: X"
+  const [infoModal, setInfoModal] = useState<'rules' | 'aboutDev' | null>(null);
   const profileRef = useRef(profile);
   profileRef.current = profile;
   const triedWalletLogin = useRef(false);
@@ -263,6 +269,19 @@ export default function App() {
   return (
     <div className="game-frame">
       <div className="screen">{renderScene()}</div>
+      <div className="info-icons">
+        <button onClick={() => setInfoModal('rules')} title="Rules">
+          📖
+        </button>
+        <button onClick={() => setInfoModal('aboutDev')} title="About the Dev">
+          👤
+        </button>
+      </div>
+      {infoModal && (
+        <Modal title={infoModal === 'rules' ? '📖 How to Play' : '👤 About the Dev'} onClose={() => setInfoModal(null)}>
+          {infoModal === 'rules' ? <RulesContent /> : <AboutDevContent />}
+        </Modal>
+      )}
     </div>
   );
 
@@ -281,10 +300,14 @@ export default function App() {
           wallet={scene.wallet}
           onAuthed={(p, isNewAccount) => {
             setProfile(p);
-            setScene(isNewAccount ? { name: 'create' } : restoreScene(p));
+            setScene(isNewAccount ? { name: 'rules' } : restoreScene(p));
           }}
         />
       );
+    }
+
+    if (scene.name === 'rules') {
+      return <RulesScene onContinue={() => setScene({ name: 'create' })} />;
     }
 
     if (scene.name === 'create' || !profile) {
