@@ -191,11 +191,48 @@ return, mirroring **Pokémon TCG Pocket**. Design:
   - Differentiate platform: client sends `platform: 'mobile' | 'desktop'` in `queue`; server
     picks grace length. (Detect mobile via `navigator.maxTouchPoints`/userAgent.)
 
-### 2. Finish the Solana escrow (devnet)
-- Deploy `programs/pokebrawl-escrow` via **Solana Playground** (beta.solpg.io) → get Program ID + IDL.
-- Client: build `create_match`/`join_match` deposit txns from Phantom (needs `@solana/web3.js`).
-- Server: hold an authority keypair; call `settle(winner)` when a wagered match ends; `refund`/`cancel` on draw/no-show.
-- Add a rake (% of pot) in settle if desired. **Audit + legal before mainnet** (gambling + IP).
+### 2. Finish the Solana escrow (devnet) — ⏸️ PAUSED, deliberately
+SOL wagering and the Poké Shop are **intentionally locked as "Coming Soon"**
+in the live UI right now (`Lobby.tsx`'s paid stake tiers, `Town.tsx`'s shop
+card — both `disabled`, no functional path to either). This was a deliberate
+pause, not a bug: the escrow program is unaudited, was never successfully
+deployed (blocked on devnet faucet exhaustion — tried the public faucet,
+QuickNode, Alchemy, and a direct RPC airdrop from this environment, all
+exhausted same day), and zero integration code existed yet when we stopped.
+Free online PvP and Practice are unaffected and fully working.
+
+**What's ready to resume with, once there's devnet SOL:**
+- `programs/pokebrawl-escrow/src/lib.rs` — the Anchor program (create_match/
+  join_match/settle/refund/cancel), written, unaudited, undeployed.
+- `src/solana/escrowProgram.ts` — hand-rolled (no IDL/`@coral-xyz/anchor`
+  needed) instruction encoders + PDA derivation + account decoder, using
+  Anchor's standard discriminator convention (`sha256("global:<ix>")`/
+  `sha256("account:<Type>")`, first 8 bytes). Has a
+  `REPLACE_WITH_ESCROW_PROGRAM_ID` placeholder, same pattern as
+  `COIN_MINT_ADDRESS`. Note: `@noble/hashes` v2's sha256 lives at
+  `@noble/hashes/sha2.js` (not `.../sha256`) and takes bytes, not a string —
+  already handled, just flagging in case the package majors again.
+- `create-escrow-authority.mts` (repo root, gitignored) — same resumable-
+  keypair pattern as `create-coin-mint.mts`; generates/reuses
+  `.secrets/escrow-authority.json`, airdrops devnet SOL once available.
+- Deploy via **Solana Playground** (beta.solpg.io) — paste in `lib.rs`,
+  connect a devnet wallet, Build then **Deploy** (separate steps — a Program
+  ID exists locally before deploy ever runs, so "I have a Program ID" isn't
+  proof anything landed on-chain; verify with `connection.getAccountInfo`).
+  Deploying this program costs noticeably more devnet SOL than you'd expect
+  (~5+ SOL quoted by Playground for this one) since the deploy buffer needs
+  roughly double the final rent up front.
+- Still to design once unblocked: deposit-gated matchmaking (don't start the
+  battle until both `create_match`/`join_match` deposits are confirmed
+  on-chain server-side — never trust the client's say-so), a deposit
+  timeout/refund path, and wiring `settle`/`refund`/`cancel` into the
+  existing match-end points in `server/index.ts` (`resolveTurn`'s `cleanup`,
+  `timeUp`, `forfeit`) — the winner is already decided safely there by the
+  real `@pkmn/sim` battle; this is just calling the contract with that result.
+- **Mainnet is a separate later decision** — real SOL costs real money (no
+  faucet), and real-money wagering is regulated gambling. Get this fully
+  verified on devnet and have the legal/licensing side actually in place
+  first.
 
 ### 3. Nice-to-haves
 - Show W/L on the result screen; persist teams/profile server-side keyed by wallet.
@@ -206,3 +243,12 @@ return, mirroring **Pokémon TCG Pocket**. Design:
 - Windows + winget user-scope installs need a fresh terminal (or VS Code restart) to land on PATH.
 - The throwaway `*.mts` scripts in the repo root are gitignored test helpers — ignore them.
 - `asset-src/` (root) is gitignored downloaded research assets — not used by the build.
+- **This project lives under OneDrive's redirected Desktop**
+  (`C:\Users\<you>\OneDrive\Desktop\pokebrawl`), not the plain
+  `C:\Users\<you>\Desktop\pokebrawl`. On this machine the two paths aren't
+  reliably the same thing — partway through a session, commands against the
+  plain path silently started hitting a separate, nearly-empty stray folder
+  (just a stub `package.json`) instead of the real, git-tracked project,
+  with no error to indicate the switch. If file edits/builds/installs ever
+  stop showing up where expected, check you're operating on the
+  `OneDrive\Desktop` path specifically before assuming something else broke.

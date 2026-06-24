@@ -12,6 +12,7 @@
     "start": "tsx server/index.ts"
   },
   "dependencies": {
+    "@noble/hashes": "^2.2.0",
     "@pkmn/data": "latest",
     "@pkmn/dex": "latest",
     "@pkmn/sim": "latest",

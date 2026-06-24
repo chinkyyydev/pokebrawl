@@ -73,16 +73,14 @@ export function Town({
           <span className="location-emoji">⚔️</span>
           <span className="location-name">BATTLE STADIUM</span>
           <span className="location-desc">
-            {ready ? 'Stake SOL and battle a trainer.' : 'Build a team first!'}
+            {ready ? 'Battle a trainer (SOL wagering coming soon).' : 'Build a team first!'}
           </span>
         </button>
 
-        <button className="location-card" onClick={onBuy}>
+        <button className="location-card" disabled onClick={onBuy} title="Coming soon">
           <span className="location-emoji">🛒</span>
           <span className="location-name">POKÉ SHOP</span>
-          <span className="location-desc">
-            Buy coin using $Pokebrawl ({profile.collection.length} owned).
-          </span>
+          <span className="location-desc">🔒 Coming soon ({profile.collection.length} owned so far).</span>
         </button>
       </div>
 

@@ -4,7 +4,6 @@ import { teamIsReady, teamCount } from '../state/storage';
 import { monSprite } from '../data/sprites';
 import type { Team } from '../types';
 import { DialogBox } from './DialogBox';
-import { useWallet } from '../solana/wallet';
 
 const STAKE_TIERS = [0.1, 0.5, 1, 5, 10];
 
@@ -26,10 +25,7 @@ export function Lobby({
     : readyIdx[0]?.i ?? 0;
   const [picked, setPicked] = useState(defaultIdx);
   const [mode, setMode] = useState<'online' | 'practice'>('online');
-  const { address, connect } = useWallet();
   const isOnline = mode === 'online';
-  // Free play (stake 0) and practice need no wallet; only real SOL wagers do.
-  const canWager = !!address;
 
   const start = (stake: number) => {
     const members = profile.teams[picked].members;
@@ -41,8 +37,8 @@ export function Lobby({
     <div className="scene lobby-scene">
       <DialogBox speaker="STADIUM CLERK">
         Pick your team and mode. <strong>Practice</strong> is a free battle vs the CPU.
-        <strong> Online</strong> matches you against a real trainer — play FREE for fun, or wager
-        SOL against someone who staked the same. (Devnet — no real SOL yet.)
+        <strong> Online</strong> matches you against a real trainer for free, for fun. SOL
+        wagering is coming soon!
       </DialogBox>
 
       <div className="mode-toggle">
@@ -89,14 +85,10 @@ export function Lobby({
               <span className="tier-pot muted">just for fun</span>
             </button>
             {STAKE_TIERS.map((s) => (
-              <button
-                key={s}
-                className="tier"
-                onClick={() => (canWager ? start(s) : connect())}
-              >
+              <button key={s} className="tier locked" disabled title="SOL wagering is coming soon">
                 <span className="tier-amount">{s} SOL</span>
                 <span className="tier-vs">vs {s} SOL</span>
-                <span className="tier-pot muted">{canWager ? `pot ${s * 2}` : '🔒 connect'}</span>
+                <span className="tier-pot muted">🔒 COMING SOON</span>
               </button>
             ))}
           </div>
@@ -119,8 +111,8 @@ export function Lobby({
       </div>
 
       <p className="disclaimer">
-        ⚠️ Real-money wagering is gambling and is heavily regulated. This build runs on Solana
-        <strong> devnet</strong> with no real value.
+        ⚠️ SOL wagering is coming soon. Real-money wagering is gambling and is heavily
+        regulated — testing will run on Solana <strong>devnet</strong> first, with no real value.
       </p>
     </div>
   );

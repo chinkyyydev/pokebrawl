@@ -16,16 +16,9 @@ import { rollShiny } from './game/shiny';
 import { getSpecies } from './data/pokedex';
 import { toPokemonSet, type Team, type TeamMember } from './types';
 import { useWallet } from './solana/wallet';
-import { claimReward } from './solana/coin';
 import { useAuth } from './state/auth';
 import { fetchProfile, pushProfile } from './state/profileApi';
-import {
-  LEVEL_MILESTONES,
-  WIN_COIN_REWARD,
-  WELCOME_COIN_GRANT,
-  RENTAL_DURATION_MS,
-  type Profile,
-} from './state/storage';
+import { LEVEL_MILESTONES, RENTAL_DURATION_MS, type Profile } from './state/storage';
 
 /**
  * Two repair jobs that both need an async dice-roll, run together so there's
@@ -245,7 +238,8 @@ export default function App() {
 
   // Record an online (PvP) match result onto the profile's W/L. Wins also
   // level the player up: every 5 levels (up to 25) grants a free random
-  // Pokémon, and — if a wallet is connected — a small coin reward.
+  // Pokémon. (Coin rewards are paused along with the Poké Shop/wagering —
+  // see RESUME.md — so no claimReward call here for now.)
   function recordResult(won: boolean) {
     let wins = 0;
     setProfile((p) => {
@@ -253,7 +247,6 @@ export default function App() {
       wins = p.wins + (won ? 1 : 0);
       return { ...p, wins, level: wins, losses: p.losses + (won ? 0 : 1) };
     });
-    if (won && address) claimReward(address, WIN_COIN_REWARD);
     if (won && LEVEL_MILESTONES.includes(wins)) {
       const current = profileRef.current;
       const [drop] = sampleSpecies(1, current?.collection.map((m) => m.species) ?? []);
@@ -326,7 +319,7 @@ export default function App() {
                     }
                   : p,
               );
-              if (address) claimReward(address, WELCOME_COIN_GRANT);
+              // Coin welcome grant paused along with the Poké Shop — see RESUME.md.
               setScene({ name: 'town' });
             }}
           />
