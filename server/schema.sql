@@ -15,3 +15,25 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_username_lower_idx ON accounts (username_lower);
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_wallet_idx ON accounts (wallet_address) WHERE wallet_address IS NOT NULL;
 CREATE INDEX IF NOT EXISTS accounts_signup_ip_idx ON accounts (signup_ip);
+
+-- A wagered match's settle/refund/cancel call that failed (network hiccup,
+-- escrow authority briefly out of fees, etc.) gets durably recorded here
+-- instead of just console.error'd and forgotten -- a background loop in
+-- server/index.ts retries every unresolved row until it succeeds, including
+-- after a server restart. The on-chain contract's own `settled` guard makes
+-- retries safe (a second attempt at an already-settled match just fails
+-- harmlessly), so retrying forever is the right default, not a fixed cap.
+CREATE TABLE IF NOT EXISTS pending_settlements (
+  id SERIAL PRIMARY KEY,
+  match_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('settle', 'refund', 'cancel')),
+  payload JSONB NOT NULL,        -- args needed to retry: winner, or player1/player2
+  attempts INT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_attempt_at TIMESTAMPTZ,
+  resolved_at TIMESTAMPTZ        -- NULL until it succeeds
+);
+
+CREATE INDEX IF NOT EXISTS pending_settlements_unresolved_idx
+  ON pending_settlements (created_at) WHERE resolved_at IS NULL;

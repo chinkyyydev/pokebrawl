@@ -74,3 +74,59 @@ export async function saveProfile(accountId: number, profile: Profile): Promise<
     accountId,
   ]);
 }
+
+// --- Escrow settlement reliability -----------------------------------------
+// A settle/refund/cancel call that fails (network hiccup, escrow authority
+// briefly out of fees) gets recorded here instead of just console.error'd and
+// lost — see server/index.ts's retry loop.
+
+export type SettlementKind = 'settle' | 'refund' | 'cancel';
+export interface SettlePayload { winner: string }
+export interface RefundPayload { player1: string; player2: string }
+export interface CancelPayload { player1: string }
+export type SettlementPayload = SettlePayload | RefundPayload | CancelPayload;
+
+export interface PendingSettlement {
+  id: number;
+  matchId: string;
+  kind: SettlementKind;
+  payload: SettlementPayload;
+  attempts: number;
+}
+
+export async function recordFailedSettlement(
+  matchId: number,
+  kind: SettlementKind,
+  payload: SettlementPayload,
+  error: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO pending_settlements (match_id, kind, payload, attempts, last_error, last_attempt_at)
+     VALUES ($1, $2, $3, 1, $4, now())`,
+    [String(matchId), kind, JSON.stringify(payload), error],
+  );
+}
+
+export async function listUnresolvedSettlements(): Promise<PendingSettlement[]> {
+  const res = await pool.query(
+    'SELECT id, match_id, kind, payload, attempts FROM pending_settlements WHERE resolved_at IS NULL ORDER BY created_at',
+  );
+  return res.rows.map((row) => ({
+    id: row.id as number,
+    matchId: row.match_id as string,
+    kind: row.kind as SettlementKind,
+    payload: row.payload as SettlementPayload,
+    attempts: row.attempts as number,
+  }));
+}
+
+export async function markSettlementAttemptFailed(id: number, error: string): Promise<void> {
+  await pool.query(
+    'UPDATE pending_settlements SET attempts = attempts + 1, last_error = $1, last_attempt_at = now() WHERE id = $2',
+    [error, id],
+  );
+}
+
+export async function markSettlementResolved(id: number): Promise<void> {
+  await pool.query('UPDATE pending_settlements SET resolved_at = now() WHERE id = $1', [id]);
+}

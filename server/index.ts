@@ -29,7 +29,21 @@ import {
   verifyPassword,
   verifyToken,
 } from './auth';
-import { countByIp, createAccount, findById, findByUsername, findByWallet, saveProfile } from './db';
+import {
+  countByIp,
+  createAccount,
+  findById,
+  findByUsername,
+  findByWallet,
+  listUnresolvedSettlements,
+  markSettlementAttemptFailed,
+  markSettlementResolved,
+  recordFailedSettlement,
+  saveProfile,
+  type CancelPayload,
+  type RefundPayload,
+  type SettlePayload,
+} from './db';
 import {
   cancelMatch,
   escrowAuthority,
@@ -294,14 +308,25 @@ class Match {
   /** Pay the on-chain pot to the winner (stake === 0 is free play, no escrow). */
   private settleStake(winner: Client | null): void {
     if (this.stake <= 0 || !this.matchId) return;
+    const matchId = this.matchId;
     if (winner) {
-      settleMatch(this.matchId, winner.wallet).catch((err) =>
-        console.error(`settle ${this.matchId} failed:`, err),
-      );
+      settleMatch(matchId, winner.wallet).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`settle ${matchId} failed, recording for retry:`, message);
+        recordFailedSettlement(matchId, 'settle', { winner: winner.wallet }, message).catch((dbErr) =>
+          console.error(`!! also failed to record settle ${matchId} for retry — money may be stuck:`, dbErr),
+        );
+      });
     } else {
-      refundMatch(this.matchId, this.p1.wallet, this.p2.wallet).catch((err) =>
-        console.error(`refund ${this.matchId} failed:`, err),
-      );
+      const player1 = this.p1.wallet;
+      const player2 = this.p2.wallet;
+      refundMatch(matchId, player1, player2).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`refund ${matchId} failed, recording for retry:`, message);
+        recordFailedSettlement(matchId, 'refund', { player1, player2 }, message).catch((dbErr) =>
+          console.error(`!! also failed to record refund ${matchId} for retry — money may be stuck:`, dbErr),
+        );
+      });
     }
   }
 
@@ -609,15 +634,81 @@ async function failDeposit(matchId: number, message: string): Promise<void> {
   const onChain = await getMatch(matchId).catch(() => null);
   if (!onChain) return; // nothing was ever created on-chain — nothing to undo
   if (!onChain.player2.equals(PublicKey.default)) {
-    refundMatch(matchId, pending.creator.wallet, pending.joiner.wallet).catch((err) =>
-      console.error(`refund ${matchId} failed:`, err),
-    );
+    const player1 = pending.creator.wallet;
+    const player2 = pending.joiner.wallet;
+    refundMatch(matchId, player1, player2).catch((err) => {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`refund ${matchId} failed, recording for retry:`, errMessage);
+      recordFailedSettlement(matchId, 'refund', { player1, player2 }, errMessage).catch((dbErr) =>
+        console.error(`!! also failed to record refund ${matchId} for retry — money may be stuck:`, dbErr),
+      );
+    });
   } else {
-    cancelMatch(matchId, pending.creator.wallet).catch((err) =>
-      console.error(`cancel ${matchId} failed:`, err),
-    );
+    const player1 = pending.creator.wallet;
+    cancelMatch(matchId, player1).catch((err) => {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.error(`cancel ${matchId} failed, recording for retry:`, errMessage);
+      recordFailedSettlement(matchId, 'cancel', { player1 }, errMessage).catch((dbErr) =>
+        console.error(`!! also failed to record cancel ${matchId} for retry — money may be stuck:`, dbErr),
+      );
+    });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Escrow settlement reliability: a settle/refund/cancel call that failed
+// (network hiccup, escrow authority briefly out of fees) was recorded in
+// Postgres rather than just logged and lost. Retry every unresolved one on
+// an interval — the on-chain `settled` guard makes retrying an
+// already-succeeded one harmless, so there's no reason to ever give up.
+// Also runs shortly after startup, so anything left over from before a
+// restart/redeploy gets picked back up.
+const SETTLEMENT_RETRY_MS = 30_000;
+
+async function retryPendingSettlements(): Promise<void> {
+  if (!escrowAuthority) return; // nothing we could sign with anyway
+  const pending = await listUnresolvedSettlements().catch((err) => {
+    console.error('Failed to list pending settlements:', err);
+    return [];
+  });
+  for (const p of pending) {
+    const matchId = Number(p.matchId);
+    try {
+      switch (p.kind) {
+        case 'settle': {
+          const { winner } = p.payload as SettlePayload;
+          await settleMatch(matchId, winner);
+          break;
+        }
+        case 'refund': {
+          const { player1, player2 } = p.payload as RefundPayload;
+          await refundMatch(matchId, player1, player2);
+          break;
+        }
+        case 'cancel': {
+          const { player1 } = p.payload as CancelPayload;
+          await cancelMatch(matchId, player1);
+          break;
+        }
+      }
+      await markSettlementResolved(p.id);
+      console.log(`✅ Retry succeeded: ${p.kind} for match ${p.matchId} (after ${p.attempts} earlier failed attempt(s))`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Retry of ${p.kind} for match ${p.matchId} failed (attempt ${p.attempts + 1}):`, message);
+      await markSettlementAttemptFailed(p.id, message).catch((dbErr) =>
+        console.error(`Failed to record retry attempt for settlement ${p.id}:`, dbErr),
+      );
+    }
+  }
+}
+
+setInterval(() => {
+  retryPendingSettlements().catch((err) => console.error('retryPendingSettlements crashed:', err));
+}, SETTLEMENT_RETRY_MS);
+setTimeout(() => {
+  retryPendingSettlements().catch((err) => console.error('retryPendingSettlements crashed:', err));
+}, 5_000);
 
 // HTTP server: serves the built game, the account + coin-reward APIs, and
 // answers Render's health check.
