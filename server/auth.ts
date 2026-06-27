@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? '';
 const TOKEN_TTL = '30d';
-export const MAX_ACCOUNTS_PER_IP = 4;
+export const MAX_ACCOUNTS_PER_IP = 5;
 
 export const USERNAME_RE = /^[a-zA-Z0-9_]{3,12}$/;
 
