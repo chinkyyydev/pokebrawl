@@ -25,7 +25,7 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
       </div>
 
       <p className="title-foot">
-        Free vs CPU &amp; real trainers · SOL wagering on devnet
+        Free vs CPU &amp; real trainers · SOL wagering with real SOL
       </p>
     </div>
   );

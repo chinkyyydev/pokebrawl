@@ -12,9 +12,10 @@
 import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
-// Deployed to devnet (built + deployed locally via cargo-build-sbf + solana CLI,
-// see RESUME.md). Override with ESCROW_PROGRAM_ID env var if redeployed elsewhere.
-export const ESCROW_PROGRAM_ID = 'ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv';
+// Deployed to mainnet-beta (built + deployed locally via cargo-build-sbf +
+// solana CLI, see RESUME.md). The devnet deployment (now superseded as the
+// primary target) was ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv.
+export const ESCROW_PROGRAM_ID = '5eXLrUexRtKcpJPP6jf6dntKZoueq6F9SzkycBdGxWCq';
 
 export function programId(): PublicKey {
   return new PublicKey(ESCROW_PROGRAM_ID);

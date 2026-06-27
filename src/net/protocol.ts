@@ -31,7 +31,7 @@ export type ClientMsg =
   | { type: 'cancel' }
   | { type: 'choice'; choice: string }
   | { type: 'leave' }
-  | { type: 'staked'; matchId: number }; // my devnet deposit tx confirmed client-side
+  | { type: 'staked'; matchId: number }; // my deposit tx confirmed client-side
 
 export type ServerMsg =
   | { type: 'queued'; stake: number; players: number }

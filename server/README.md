@@ -1,42 +1,34 @@
-# Server (placeholder — Milestone 2 & 3)
+# Server
 
-Nothing here runs yet. This folder marks where the authoritative game server and
-Solana custodial layer will live. Planned shape:
+Authoritative WebSocket + HTTP server for PokéBrawl. See `RESUME.md` at the
+repo root for the full picture — this is just a quick map of what's here.
 
 ```
 server/
-  index.ts            WebSocket server (ws or socket.io)
-  matchmaking.ts      Queue keyed by stake tier (0.1 / 0.5 / 1 / 5 / 10 SOL)
-  match.ts            Owns one @pkmn/sim Battle; relays protocol to both clients
-  solana/
-    escrow.ts         Devnet custodial wallet: verify deposits, pay out winner
-    connection.ts     @solana/web3.js connection + keypair loading (from env)
+  index.ts      HTTP + WebSocket server: matchmaking, the authoritative
+                @pkmn/sim battle, deposit-gated wagering, accounts/auth APIs,
+                the admin kill-switch, and the settlement-retry/monitoring loops
+  auth.ts       Session tokens (JWT), password hashing, admin-secret check
+  db.ts         Postgres (accounts, pending_settlements, app_flags)
+  escrow.ts     Signs settle/refund/cancel against the on-chain escrow
+                program — see programs/pokebrawl-escrow/src/lib.rs
+  schema.sql    Run once against DATABASE_URL to create/update tables
 ```
 
-## Why the battle must run server-side
+## Why the battle runs server-side, not in the browser
 
-In Milestone 1 the simulator runs in the browser, which is fine for solo play.
-For PvP with money on the line, the client cannot be trusted to report results.
-The server must own the `@pkmn/sim` Battle, receive only *choices* ("move 1",
-"switch 3") from each client, validate them, and broadcast the resulting battle
-log. Clients render; the server decides.
+With real money on the line, the client can't be trusted to report a
+result. This server owns the `@pkmn/sim` Battle, receives only *choices*
+("move 1", "switch 3") from each client, validates them, and broadcasts the
+resulting battle log — clients render; the server decides.
 
-## Solana custodial flow (devnet first)
+## How wagering actually works (not custodial — funds never sit in a hot wallet)
 
-1. Both players connect a wallet (Phantom) and deposit their stake to a
-   server-controlled escrow address.
-2. Server confirms both deposits on-chain before starting the match.
-3. Server runs the battle, determines the winner, and sends the pot (minus an
-   optional rake) to the winner; refunds on draw/disconnect-timeout per rules.
-
-Env vars to add later (never commit secrets):
-
-```
-SOLANA_RPC_URL=https://api.devnet.solana.com
-ESCROW_SECRET_KEY=...   # base58 / json keypair, devnet only
-RAKE_BPS=0
-```
-
-> ⚠️ Custodial means the server holds user funds — a security and regulatory
-> liability. Audit before mainnet, or replace this with an on-chain Anchor
-> escrow program so funds are never in a hot wallet you control.
+Stakes are held by an on-chain Anchor escrow program
+(`programs/pokebrawl-escrow`), not by this server directly. The server only
+holds a single "authority" keypair (`ESCROW_AUTHORITY_SECRET`) that's allowed
+to *sign* settle/refund/cancel once a match ends — it never has custody of
+player funds itself, only the ability to instruct the on-chain program to
+release stake to the right address. See `RESUME.md` for the full deposit
+flow, the operational hardening (kill-switch, monitoring), and the audit
+history.

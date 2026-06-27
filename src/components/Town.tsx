@@ -73,7 +73,7 @@ export function Town({
           <span className="location-emoji">⚔️</span>
           <span className="location-name">BATTLE STADIUM</span>
           <span className="location-desc">
-            {ready ? 'Battle a trainer — free, or wager devnet SOL.' : 'Build a team first!'}
+            {ready ? 'Battle a trainer — free, or wager real SOL.' : 'Build a team first!'}
           </span>
         </button>
 

@@ -30,7 +30,7 @@ export function RulesContent() {
       <h3>⚔️ Battling</h3>
       <p>
         Practice anytime vs the CPU for free. Online matches you against real trainers — free
-        for fun, or wager devnet SOL with a connected wallet. Each turn has a 45-second timer
+        for fun, or wager real SOL with a connected wallet. Each turn has a 45-second timer
         backed by a 7-minute match clock, so matches keep moving.
       </p>
 

@@ -9,8 +9,8 @@ export function AboutDevContent() {
         wanted and iterating with AI rather than writing every line by hand.
       </p>
       <p>
-        It's still very much a work in progress (and devnet-only for now!), so thanks for trying
-        it out. Bug reports and feedback are always welcome.
+        It's still very much a work in progress, so thanks for trying it out. SOL wagering uses
+        real money — play responsibly. Bug reports and feedback are always welcome.
       </p>
       <p>
         <a href="https://github.com/chinkyyydev/pokebrawl" target="_blank" rel="noopener noreferrer">

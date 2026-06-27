@@ -39,7 +39,7 @@ export function Lobby({
       <DialogBox speaker="STADIUM CLERK">
         Pick your team and mode. <strong>Practice</strong> is a free battle vs the CPU.
         <strong> Online</strong> matches you against a real trainer — free for fun, or
-        wager devnet SOL with a connected wallet.
+        wager real SOL with a connected wallet.
       </DialogBox>
 
       <div className="mode-toggle">
@@ -97,7 +97,7 @@ export function Lobby({
                   key={s}
                   className="tier"
                   onClick={connect}
-                  title="Connect a wallet to wager devnet SOL"
+                  title="Connect a wallet to wager real SOL"
                 >
                   <span className="tier-amount">{s} SOL</span>
                   <span className="tier-vs">vs {s} SOL</span>
@@ -125,8 +125,9 @@ export function Lobby({
       </div>
 
       <p className="disclaimer">
-        ⚠️ SOL wagering runs on Solana <strong>devnet</strong> only — devnet SOL has no real
-        value. Real-money wagering is gambling and is heavily regulated; this is not that.
+        ⚠️ SOL wagering uses <strong>real SOL with real monetary value</strong>. This is
+        real-money wagering and is regulated gambling — only wager funds you can afford to
+        lose, and make sure online wagering is legal where you are.
       </p>
     </div>
   );

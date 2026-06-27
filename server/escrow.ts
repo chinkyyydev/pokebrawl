@@ -1,8 +1,11 @@
-// Server-side glue for the deployed pokebrawl-escrow program (devnet). The
-// server holds the escrow "authority" keypair and is the only signer allowed
-// to settle/refund/cancel a match — see programs/pokebrawl-escrow/src/lib.rs.
-// Only active once ESCROW_AUTHORITY_SECRET is set (same on/off pattern as
-// COIN_MINT_SECRET in index.ts).
+// Server-side glue for the deployed pokebrawl-escrow program (mainnet-beta).
+// The server holds the escrow "authority" keypair and is the only signer
+// allowed to settle/refund/cancel a match — see
+// programs/pokebrawl-escrow/src/lib.rs. Only active once
+// ESCROW_AUTHORITY_SECRET is set (same on/off pattern as COIN_MINT_SECRET in
+// index.ts). ESCROW_RPC_URL should always be set explicitly in production
+// (a keyed/metered endpoint, e.g. Helius) — the public mainnet-beta fallback
+// here is a safety net, not the intended steady-state.
 import { Connection, Keypair, PublicKey, Transaction, clusterApiUrl, sendAndConfirmTransaction } from '@solana/web3.js';
 import {
   cancelIx,
@@ -13,7 +16,7 @@ import {
   type MatchAccount,
 } from '../src/solana/escrowProgram';
 
-const connection = new Connection(process.env.ESCROW_RPC_URL ?? clusterApiUrl('devnet'), 'confirmed');
+const connection = new Connection(process.env.ESCROW_RPC_URL ?? clusterApiUrl('mainnet-beta'), 'confirmed');
 
 export const escrowAuthority = process.env.ESCROW_AUTHORITY_SECRET
   ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(process.env.ESCROW_AUTHORITY_SECRET)))

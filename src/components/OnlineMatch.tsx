@@ -248,7 +248,7 @@ export function OnlineMatch({
               ? `Your opponent deposited — approve your ${stake} SOL deposit in your wallet…`
               : 'Waiting for your opponent to deposit their stake…'}
         </DialogBox>
-        <div className="searching">💰 Depositing on devnet…</div>
+        <div className="searching">💰 Depositing on-chain…</div>
         <button className="press-start" onClick={leave}>
           ✕ Cancel
         </button>
@@ -329,7 +329,7 @@ export function OnlineMatch({
           (stake === 0
             ? 'Free play — nothing wagered. GG!'
             : won
-              ? `Payout of ~${stake * 2} SOL is settling to your devnet wallet now.`
+              ? `Payout of ~${stake * 2} SOL is settling to your wallet now.`
               : `Your ${stake} SOL stake has been sent to the opponent.`)
         }
         onChoose={choose}
