@@ -67,13 +67,20 @@ export class BattleController {
     return this.battle.winner ?? undefined;
   }
 
-  /** Which side won, independent of (possibly duplicate) player names. */
+  /** Which side won — trusts the sim's own `battle.winner` (the authoritative
+   * tie/win signal, set via Battle#win()/#tie()) rather than re-deriving it
+   * from pokemonLeft, which doesn't reliably reach a true 0-vs-0 state even
+   * on a genuine mutual KO (the sim ends the battle as soon as either side
+   * hits 0, short-circuiting before the other side's faint is counted) — that
+   * previously meant a real tie (e.g. mutual Explosion KO, or a turn-limit
+   * tie) could get silently misattributed to whichever side happened to be
+   * checked first, paying out the full pot to the wrong/no winner. */
   winnerSide(): SideID | null {
     if (!this.battle.ended) return null;
-    for (const s of this.battle.sides) {
-      if (s.pokemonLeft <= 0) return s.id === 'p1' ? 'p2' : 'p1';
-    }
-    return null; // tie / unresolved
+    const winnerName = this.battle.winner;
+    if (!winnerName) return null; // tie — battle.winner is '' for Battle#tie()
+    const side = this.battle.sides.find((s) => s.name === winnerName);
+    return (side?.id as SideID) ?? null;
   }
 
   private side(id: SideID) {

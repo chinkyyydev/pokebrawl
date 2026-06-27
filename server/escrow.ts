@@ -26,6 +26,18 @@ export async function getMatch(matchId: number): Promise<MatchAccount | null> {
   return info ? decodeMatchAccount(info.data) : null;
 }
 
+/** A match is only safe to treat as ours if its stored `authority` is really
+ * us — `create_match` accepts that pubkey as a bare argument with no on-chain
+ * validation, so anyone can create a match naming themselves (or anyone) as
+ * authority. Without this check, an attacker could create a match outside
+ * our app with their own key as authority, let our matchmaking pair an
+ * honest player into "joining" it, and then unilaterally settle in their own
+ * favor — our server would never be able to detect or stop that, since only
+ * the real (mismatched) authority can sign settle/refund/cancel for it. */
+export function isOurMatch(m: MatchAccount): boolean {
+  return !!escrowAuthority && m.authority.equals(escrowAuthority.publicKey);
+}
+
 /** Never trust the client's say-so that they deposited — read the match PDA
  * straight from the chain. Both create_match and join_match transfer the
  * stake and set player1/player2 atomically in the same instruction, so a
@@ -37,6 +49,7 @@ export async function verifyMatchFunded(
   const m = await getMatch(matchId);
   if (!m) return false;
   return (
+    isOurMatch(m) &&
     !m.settled &&
     m.stakeLamports === expectedStakeLamports &&
     !m.player2.equals(PublicKey.default)

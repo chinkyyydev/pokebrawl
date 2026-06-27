@@ -17,7 +17,7 @@ import { BattleController, type SideID } from '../src/game/battle';
 import { chooseTopMove } from '../src/game/ai';
 import { teamBanViolation } from '../src/data/bans';
 import { createProfile } from '../src/state/storage';
-import type { BattleStateMsg, ClientMsg, ServerMsg } from '../src/net/protocol';
+import { STAKE_TIERS, type BattleStateMsg, type ClientMsg, type ServerMsg } from '../src/net/protocol';
 import {
   authFromHeader,
   clientIp,
@@ -30,7 +30,15 @@ import {
   verifyToken,
 } from './auth';
 import { countByIp, createAccount, findById, findByUsername, findByWallet, saveProfile } from './db';
-import { cancelMatch, getMatch, refundMatch, settleMatch, verifyMatchFunded } from './escrow';
+import {
+  cancelMatch,
+  escrowAuthority,
+  getMatch,
+  isOurMatch,
+  refundMatch,
+  settleMatch,
+  verifyMatchFunded,
+} from './escrow';
 import { randomMatchId, solToLamports } from '../src/solana/escrowProgram';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -490,7 +498,11 @@ function enqueue(
     joiner: client,
     creatorStaked: false,
     joinerStaked: false,
-    timeout: setTimeout(() => failDeposit(matchId, 'Deposit window expired.'), DEPOSIT_TIMEOUT_MS),
+    timeout: setTimeout(() => {
+      failDeposit(matchId, 'Deposit window expired.').catch((err) =>
+        console.error('failDeposit failed:', err),
+      );
+    }, DEPOSIT_TIMEOUT_MS),
   });
   send(opponent.ws, { type: 'matchFound', opponentName: client.name, opponentWallet: client.wallet, matchId, isCreator: true });
   send(client.ws, { type: 'matchFound', opponentName: opponent.name, opponentWallet: opponent.wallet, matchId, isCreator: false });
@@ -530,8 +542,14 @@ async function handleStaked(client: Client, matchId: number): Promise<void> {
   if (client === pending.creator) {
     const onChain = await retryUntil(async () => {
       const m = await getMatch(matchId);
-      return m && m.player1.toBase58() === client.wallet && m.stakeLamports === expectedLamports ? m : null;
+      return m && isOurMatch(m) && m.player1.toBase58() === client.wallet && m.stakeLamports === expectedLamports
+        ? m
+        : null;
     });
+    // The deposit window may have expired (or this match already resolved)
+    // while we were retrying — don't act on a pending object that's no
+    // longer the live one for this matchId.
+    if (pendingDeposits.get(matchId) !== pending) return;
     if (!onChain) {
       send(client.ws, { type: 'stakeFailed', message: 'Deposit not found on-chain yet — try again.' });
       return;
@@ -552,6 +570,7 @@ async function handleStaked(client: Client, matchId: number): Promise<void> {
     const m = await getMatch(matchId);
     return m && m.player2.toBase58() === client.wallet ? m : null;
   });
+  if (pendingDeposits.get(matchId) !== pending) return;
   if (!onChain) {
     send(client.ws, { type: 'stakeFailed', message: 'Deposit not found on-chain yet — try again.' });
     return;
@@ -569,9 +588,10 @@ async function handleStaked(client: Client, matchId: number): Promise<void> {
 }
 
 /** Deposit window expired, or a player bailed before both sides staked.
- * Best-effort on-chain cleanup — nobody but the creator has money at risk
- * unless the joiner also deposited, and devnet rent is cheap either way. */
-function failDeposit(matchId: number, message: string): void {
+ * Removing the pending entry happens synchronously (before any await) so a
+ * concurrent in-flight handleStaked() call sees it's gone and backs off
+ * instead of acting on a no-longer-live match. */
+async function failDeposit(matchId: number, message: string): Promise<void> {
   const pending = pendingDeposits.get(matchId);
   if (!pending) return;
   clearTimeout(pending.timeout);
@@ -581,11 +601,18 @@ function failDeposit(matchId: number, message: string): void {
   send(pending.creator.ws, { type: 'stakeFailed', message });
   send(pending.joiner.ws, { type: 'stakeFailed', message });
 
-  if (pending.creatorStaked && pending.joinerStaked) {
+  // Don't trust the in-memory creatorStaked/joinerStaked flags alone — a
+  // deposit can land in the exact instant this fires. Check the chain live
+  // so we pick refund (both deposited) vs cancel (only one did) correctly;
+  // picking the wrong one would just fail on-chain and leave funds stuck
+  // with nothing left to retry it, since this matchId is no longer tracked.
+  const onChain = await getMatch(matchId).catch(() => null);
+  if (!onChain) return; // nothing was ever created on-chain — nothing to undo
+  if (!onChain.player2.equals(PublicKey.default)) {
     refundMatch(matchId, pending.creator.wallet, pending.joiner.wallet).catch((err) =>
       console.error(`refund ${matchId} failed:`, err),
     );
-  } else if (pending.creatorStaked) {
+  } else {
     cancelMatch(matchId, pending.creator.wallet).catch((err) =>
       console.error(`cancel ${matchId} failed:`, err),
     );
@@ -658,6 +685,19 @@ wss.on('connection', (ws) => {
           send(ws, { type: 'error', message: 'Please log in again.' });
           return;
         }
+        // Never trust the client's stake value either — must be free play or
+        // one of the real tiers, not an arbitrary/garbage number.
+        if (msg.stake !== 0 && !(STAKE_TIERS as readonly number[]).includes(msg.stake)) {
+          send(ws, { type: 'error', message: 'Invalid stake amount.' });
+          return;
+        }
+        // Fail fast if wagering can't actually be settled right now, rather
+        // than pairing two players into a deposit flow that's doomed to get
+        // stuck (e.g. ESCROW_AUTHORITY_SECRET unset/misconfigured in prod).
+        if (msg.stake > 0 && !escrowAuthority) {
+          send(ws, { type: 'error', message: 'SOL wagering is temporarily unavailable — try free play.' });
+          return;
+        }
         // Teams are validated server-side — never trust the client with money on
         // the line. (Full legality validation — move legality, EV/IV limits — is
         // still TODO before mainnet; this enforces the competitive ban list.)
@@ -678,12 +718,20 @@ wss.on('connection', (ws) => {
         break;
       case 'cancel':
         dequeue(client);
-        if (client.pendingMatchId != null) failDeposit(client.pendingMatchId, 'Your opponent left.');
+        if (client.pendingMatchId != null) {
+          failDeposit(client.pendingMatchId, 'Your opponent left.').catch((err) =>
+            console.error('failDeposit failed:', err),
+          );
+        }
         break;
       case 'leave':
         client.match?.forfeit(client);
         dequeue(client);
-        if (client.pendingMatchId != null) failDeposit(client.pendingMatchId, 'Your opponent left.');
+        if (client.pendingMatchId != null) {
+          failDeposit(client.pendingMatchId, 'Your opponent left.').catch((err) =>
+            console.error('failDeposit failed:', err),
+          );
+        }
         break;
     }
   });
@@ -691,7 +739,11 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     dequeue(client);
     client.match?.forfeit(client);
-    if (client.pendingMatchId != null) failDeposit(client.pendingMatchId, 'Your opponent disconnected.');
+    if (client.pendingMatchId != null) {
+      failDeposit(client.pendingMatchId, 'Your opponent disconnected.').catch((err) =>
+        console.error('failDeposit failed:', err),
+      );
+    }
     console.log(`👋 Player disconnected — ${wss.clients.size} online`);
   });
 });

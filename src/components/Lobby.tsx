@@ -5,8 +5,7 @@ import { monSprite } from '../data/sprites';
 import type { Team } from '../types';
 import { DialogBox } from './DialogBox';
 import { useWallet } from '../solana/wallet';
-
-const STAKE_TIERS = [0.1, 0.5, 1, 5, 10];
+import { STAKE_TIERS } from '../net/protocol';
 
 export function Lobby({
   profile,
