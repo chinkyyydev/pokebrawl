@@ -30,6 +30,8 @@ import {
   verifyToken,
 } from './auth';
 import { countByIp, createAccount, findById, findByUsername, findByWallet, saveProfile } from './db';
+import { cancelMatch, getMatch, refundMatch, settleMatch, verifyMatchFunded } from './escrow';
+import { randomMatchId, solToLamports } from '../src/solana/escrowProgram';
 
 const PORT = Number(process.env.PORT ?? 8080);
 
@@ -232,6 +234,7 @@ interface Client {
   stake: number;
   side?: SideID; // which side of the battle they are (set when matched)
   match?: Match; // the match they're currently in
+  pendingMatchId?: number; // set while waiting on an on-chain deposit (stake > 0)
 }
 
 function send(ws: WebSocket, msg: ServerMsg): void {
@@ -256,6 +259,8 @@ class Match {
     readonly p1: Client,
     readonly p2: Client,
     readonly stake: number,
+    readonly matchId: number = 0,
+    notifyMatchFound = true,
   ) {
     p1.side = 'p1';
     p2.side = 'p2';
@@ -265,12 +270,31 @@ class Match {
     // Build the authoritative battle from both teams.
     this.ctrl = new BattleController(p1.team, p2.team, p1.name, p2.name);
 
-    send(p1.ws, { type: 'matchFound', opponentName: p2.name, opponentWallet: p2.wallet });
-    send(p2.ws, { type: 'matchFound', opponentName: p1.name, opponentWallet: p1.wallet });
+    // For a staked match this was already sent once (telling each side to
+    // deposit) — don't resend it; 'stakeConfirmed' was the signal that the
+    // battle is starting. Free play (matchId 0) sends it here, same as before.
+    if (notifyMatchFound) {
+      send(p1.ws, { type: 'matchFound', opponentName: p2.name, opponentWallet: p2.wallet, matchId, isCreator: false });
+      send(p2.ws, { type: 'matchFound', opponentName: p1.name, opponentWallet: p1.wallet, matchId, isCreator: false });
+    }
 
     // Send the opening state (turn 1 move selection) to both, then start the clock.
     this.pushState(this.ctrl.drainLog());
     this.startTimers();
+  }
+
+  /** Pay the on-chain pot to the winner (stake === 0 is free play, no escrow). */
+  private settleStake(winner: Client | null): void {
+    if (this.stake <= 0 || !this.matchId) return;
+    if (winner) {
+      settleMatch(this.matchId, winner.wallet).catch((err) =>
+        console.error(`settle ${this.matchId} failed:`, err),
+      );
+    } else {
+      refundMatch(this.matchId, this.p1.wallet, this.p2.wallet).catch((err) =>
+        console.error(`refund ${this.matchId} failed:`, err),
+      );
+    }
   }
 
   private clientFor(side: SideID): Client {
@@ -329,8 +353,11 @@ class Match {
     const lines = this.ctrl.drainLog();
     if (!res.ok && res.error) lines.push(`⚠️ ${res.error}`); // bad choice -> let them retry
     this.pushState(lines);
-    if (this.ctrl.ended) this.cleanup();
-    else this.startTimers(); // next decision point
+    if (this.ctrl.ended) {
+      const winSide = this.ctrl.winnerSide();
+      this.settleStake(winSide ? this.clientFor(winSide) : null);
+      this.cleanup();
+    } else this.startTimers(); // next decision point
   }
 
   // ---- Turn clock (Pokémon Champions style: 45s/turn, 7min/match) ----
@@ -378,13 +405,16 @@ class Match {
     const winner = side === 'p1' ? this.p2 : this.p1;
     send(loser.ws, { type: 'timeUp', youWon: false });
     send(winner.ws, { type: 'timeUp', youWon: true });
+    this.settleStake(winner);
     this.cleanup();
   }
 
   /** One player left mid-battle: the other wins by forfeit. */
   forfeit(leaver: Client): void {
+    if (this.over) return;
     const other = leaver === this.p1 ? this.p2 : this.p1;
     send(other.ws, { type: 'opponentLeft' });
+    this.settleStake(other);
     this.cleanup();
   }
 
@@ -400,6 +430,22 @@ class Match {
 // Matchmaking
 // ---------------------------------------------------------------------------
 const queues = new Map<number, Client[]>();
+
+// A pairing at stake > 0 doesn't start the battle immediately — both sides
+// must deposit on-chain first. The creator deposits (create_match) before the
+// joiner can (join_match requires the match PDA to already exist), so this
+// is sequential, not parallel.
+interface PendingDeposit {
+  matchId: number;
+  stake: number; // SOL
+  creator: Client;
+  joiner: Client;
+  creatorStaked: boolean;
+  joinerStaked: boolean;
+  timeout: ReturnType<typeof setTimeout>;
+}
+const pendingDeposits = new Map<number, PendingDeposit>();
+const DEPOSIT_TIMEOUT_MS = 60_000;
 
 function enqueue(
   client: Client,
@@ -418,20 +464,108 @@ function enqueue(
   );
   const opponent = waiting.shift();
 
-  if (opponent) {
-    queues.set(stake, waiting);
-    console.log(`🤝 Match: ${opponent.name} vs ${client.name} @ ${stake} SOL`);
-    new Match(opponent, client, stake); // creating the match starts the battle
-  } else {
+  if (!opponent) {
     waiting.push(client);
     queues.set(stake, waiting);
     console.log(`⏳ ${client.name} queued @ ${stake} SOL (${waiting.length} waiting)`);
     send(client.ws, { type: 'queued', stake, players: waiting.length });
+    return;
   }
+  queues.set(stake, waiting);
+
+  if (stake <= 0) {
+    console.log(`🤝 Match: ${opponent.name} vs ${client.name} @ free play`);
+    new Match(opponent, client, 0); // free play never touches the chain
+    return;
+  }
+
+  const matchId = randomMatchId();
+  console.log(`🤝 Paired: ${opponent.name} vs ${client.name} @ ${stake} SOL — awaiting deposits (match ${matchId})`);
+  opponent.pendingMatchId = matchId;
+  client.pendingMatchId = matchId;
+  pendingDeposits.set(matchId, {
+    matchId,
+    stake,
+    creator: opponent,
+    joiner: client,
+    creatorStaked: false,
+    joinerStaked: false,
+    timeout: setTimeout(() => failDeposit(matchId, 'Deposit window expired.'), DEPOSIT_TIMEOUT_MS),
+  });
+  send(opponent.ws, { type: 'matchFound', opponentName: client.name, opponentWallet: client.wallet, matchId, isCreator: true });
+  send(client.ws, { type: 'matchFound', opponentName: opponent.name, opponentWallet: opponent.wallet, matchId, isCreator: false });
 }
 
 function dequeue(client: Client): void {
   for (const [stake, list] of queues) queues.set(stake, list.filter((c) => c !== client));
+}
+
+/** A client confirmed (client-side) that their deposit transaction landed.
+ * Never trust that alone — re-derive everything from the chain. */
+async function handleStaked(client: Client, matchId: number): Promise<void> {
+  const pending = pendingDeposits.get(matchId);
+  if (!pending || (client !== pending.creator && client !== pending.joiner)) {
+    send(client.ws, { type: 'stakeFailed', message: 'Match expired — return to the lobby.' });
+    return;
+  }
+
+  const expectedLamports = solToLamports(pending.stake);
+  const onChain = await getMatch(matchId).catch(() => null);
+
+  if (client === pending.creator) {
+    if (!onChain || onChain.player1.toBase58() !== client.wallet || onChain.stakeLamports !== expectedLamports) {
+      send(client.ws, { type: 'stakeFailed', message: 'Deposit not found on-chain yet — try again.' });
+      return;
+    }
+    pending.creatorStaked = true;
+    send(pending.joiner.ws, { type: 'opponentStaked' }); // safe to join now — the PDA exists
+    return;
+  }
+
+  // Joiner: the creator must already be confirmed (so the PDA exists).
+  if (!pending.creatorStaked) {
+    send(client.ws, { type: 'stakeFailed', message: 'Waiting on the other player’s deposit.' });
+    return;
+  }
+  const funded = await verifyMatchFunded(matchId, expectedLamports);
+  if (!funded || !onChain || onChain.player2.toBase58() !== client.wallet) {
+    send(client.ws, { type: 'stakeFailed', message: 'Deposit not found on-chain yet — try again.' });
+    return;
+  }
+  pending.joinerStaked = true;
+
+  clearTimeout(pending.timeout);
+  pendingDeposits.delete(matchId);
+  pending.creator.pendingMatchId = undefined;
+  pending.joiner.pendingMatchId = undefined;
+  send(pending.creator.ws, { type: 'stakeConfirmed' });
+  send(pending.joiner.ws, { type: 'stakeConfirmed' });
+  console.log(`✅ Both deposits confirmed for match ${matchId} — starting battle`);
+  new Match(pending.creator, pending.joiner, pending.stake, matchId, false);
+}
+
+/** Deposit window expired, or a player bailed before both sides staked.
+ * Best-effort on-chain cleanup — nobody but the creator has money at risk
+ * unless the joiner also deposited, and devnet rent is cheap either way. */
+function failDeposit(matchId: number, message: string): void {
+  const pending = pendingDeposits.get(matchId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingDeposits.delete(matchId);
+  pending.creator.pendingMatchId = undefined;
+  pending.joiner.pendingMatchId = undefined;
+  send(pending.creator.ws, { type: 'stakeFailed', message });
+  send(pending.joiner.ws, { type: 'stakeFailed', message });
+
+  if (pending.creatorStaked && pending.joinerStaked) {
+    refundMatch(matchId, pending.creator.wallet, pending.joiner.wallet).catch((err) =>
+      console.error(`refund ${matchId} failed:`, err),
+    );
+  } else if (pending.creatorStaked) {
+    cancelMatch(matchId, pending.creator.wallet).catch((err) =>
+      console.error(`cancel ${matchId} failed:`, err),
+    );
+  }
 }
 
 // HTTP server: serves the built game, the account + coin-reward APIs, and
@@ -487,6 +621,9 @@ wss.on('connection', (ws) => {
     }
 
     switch (msg.type) {
+      case 'staked':
+        handleStaked(client, msg.matchId).catch((err) => console.error('staked handler failed:', err));
+        break;
       case 'queue': {
         // Identity comes from the verified session token, never from the
         // client-sent payload — same "never trust the client" principle as
@@ -517,10 +654,12 @@ wss.on('connection', (ws) => {
         break;
       case 'cancel':
         dequeue(client);
+        if (client.pendingMatchId != null) failDeposit(client.pendingMatchId, 'Your opponent left.');
         break;
       case 'leave':
         client.match?.forfeit(client);
         dequeue(client);
+        if (client.pendingMatchId != null) failDeposit(client.pendingMatchId, 'Your opponent left.');
         break;
     }
   });
@@ -528,6 +667,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     dequeue(client);
     client.match?.forfeit(client);
+    if (client.pendingMatchId != null) failDeposit(client.pendingMatchId, 'Your opponent disconnected.');
     console.log(`👋 Player disconnected — ${wss.clients.size} online`);
   });
 });

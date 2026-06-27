@@ -17,5 +17,8 @@ dist-ssr
 # Solana keypairs — never commit a private key
 /.secrets/
 
+# Rust/Anchor build output (cargo-build-sbf) — rebuild locally, don't commit
+programs/*/target/
+
 # Claude Code local settings
 /.claude/

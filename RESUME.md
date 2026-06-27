@@ -106,8 +106,8 @@ wagering. This file is the "pick up where we left off" guide.
 - **Turn timer:** server-authoritative. 60s hidden → sends `timerWarning` → client shows a
   45s countdown → on timeout the server **auto-picks** a move (keeps the game moving).
 - **Solana:** wallet connect via Phantom (`src/solana/wallet.tsx`), wallet sent as identity
-  on online queue. On-chain **escrow Anchor program** written in `programs/pokebrawl-escrow/src/lib.rs`
-  (NOT yet deployed/integrated — see below).
+  on online queue. On-chain **escrow Anchor program** (`programs/pokebrawl-escrow/src/lib.rs`)
+  is deployed to devnet and fully wired up — see "SOL wager escrow" below.
 - **Refresh persistence:** the current scene is saved; refreshing resumes in town/research/
   lobby/builder instead of the title screen (`SCENE_KEY` in App.tsx).
 - **Mobile:** responsive CSS (`@media (max-width: 720px)` in `src/styles.css`).
@@ -191,48 +191,80 @@ return, mirroring **Pokémon TCG Pocket**. Design:
   - Differentiate platform: client sends `platform: 'mobile' | 'desktop'` in `queue`; server
     picks grace length. (Detect mobile via `navigator.maxTouchPoints`/userAgent.)
 
-### 2. Finish the Solana escrow (devnet) — ⏸️ PAUSED, deliberately
-SOL wagering and the Poké Shop are **intentionally locked as "Coming Soon"**
-in the live UI right now (`Lobby.tsx`'s paid stake tiers, `Town.tsx`'s shop
-card — both `disabled`, no functional path to either). This was a deliberate
-pause, not a bug: the escrow program is unaudited, was never successfully
-deployed (blocked on devnet faucet exhaustion — tried the public faucet,
-QuickNode, Alchemy, and a direct RPC airdrop from this environment, all
-exhausted same day), and zero integration code existed yet when we stopped.
-Free online PvP and Practice are unaffected and fully working.
+### 2. SOL wager escrow (devnet) — ✅ LIVE
+SOL wagering is unlocked in the live UI (`Lobby.tsx`'s stake tiers, gated on
+a connected wallet) and fully wired end-to-end. The Poké Shop stays locked —
+that's a separate system (the PokéCoin SPL mint), unrelated to escrow, still
+not deployed (see "PokéCoin mint not yet created" above).
 
-**What's ready to resume with, once there's devnet SOL:**
-- `programs/pokebrawl-escrow/src/lib.rs` — the Anchor program (create_match/
-  join_match/settle/refund/cancel), written, unaudited, undeployed.
-- `src/solana/escrowProgram.ts` — hand-rolled (no IDL/`@coral-xyz/anchor`
-  needed) instruction encoders + PDA derivation + account decoder, using
-  Anchor's standard discriminator convention (`sha256("global:<ix>")`/
-  `sha256("account:<Type>")`, first 8 bytes). Has a
-  `REPLACE_WITH_ESCROW_PROGRAM_ID` placeholder, same pattern as
-  `COIN_MINT_ADDRESS`. Note: `@noble/hashes` v2's sha256 lives at
-  `@noble/hashes/sha2.js` (not `.../sha256`) and takes bytes, not a string —
-  already handled, just flagging in case the package majors again.
-- `create-escrow-authority.mts` (repo root, gitignored) — same resumable-
-  keypair pattern as `create-coin-mint.mts`; generates/reuses
-  `.secrets/escrow-authority.json`, airdrops devnet SOL once available.
-- Deploy via **Solana Playground** (beta.solpg.io) — paste in `lib.rs`,
-  connect a devnet wallet, Build then **Deploy** (separate steps — a Program
-  ID exists locally before deploy ever runs, so "I have a Program ID" isn't
-  proof anything landed on-chain; verify with `connection.getAccountInfo`).
-  Deploying this program costs noticeably more devnet SOL than you'd expect
-  (~5+ SOL quoted by Playground for this one) since the deploy buffer needs
-  roughly double the final rent up front.
-- Still to design once unblocked: deposit-gated matchmaking (don't start the
-  battle until both `create_match`/`join_match` deposits are confirmed
-  on-chain server-side — never trust the client's say-so), a deposit
-  timeout/refund path, and wiring `settle`/`refund`/`cancel` into the
-  existing match-end points in `server/index.ts` (`resolveTurn`'s `cleanup`,
-  `timeUp`, `forfeit`) — the winner is already decided safely there by the
-  real `@pkmn/sim` battle; this is just calling the contract with that result.
+**How it got deployed:** Solana Playground's deploy pipeline (beta.solpg.io)
+hit persistent 429 "Connection rate limits exceeded" errors regardless of
+RPC endpoint, even a verified-working Helius endpoint — Playground's deploy
+broadcast path doesn't seem to respect the custom RPC setting. Worked around
+entirely by installing the Solana CLI **locally** instead:
+- `release.solana.com`'s TLS endpoint is broken from this machine specifically
+  (DNS + TCP connect fine, TLS handshake fails) — installed via GitHub release
+  assets instead: `https://github.com/anza-xyz/agave/releases` (Solana's CLI
+  is now published under the Anza org as "agave"). The Windows installer needs
+  admin (symlink creation) — run elevated via `Start-Process -Verb RunAs`.
+- `cargo-build-sbf` (bundled with the Agave install) still needs a system
+  `cargo` for `cargo metadata`, even though it brings its own bundled
+  rustc/platform-tools for the actual compile — installed via `rustup-init`
+  from `static.rust-lang.org` (that domain works fine, unlike
+  `release.solana.com`).
+- Scaffolded `programs/pokebrawl-escrow/Cargo.toml` (anchor-lang 0.30.1,
+  `crate-type = ["cdylib", "lib"]`) since only `src/lib.rs` + `idl.json`
+  existed before (Playground doesn't expose `Cargo.toml` — it manages that
+  internally). Built with
+  `cargo-build-sbf --manifest-path programs/pokebrawl-escrow/Cargo.toml`,
+  which produces `target/deploy/pokebrawl_escrow.so` +
+  `pokebrawl_escrow-keypair.json` (the latter determines the real Program ID
+  — `declare_id!` in `lib.rs` was updated to match it, then rebuilt).
+  Deployed with `solana program deploy <.so> --program-id <keypair> --keypair
+  <funded wallet> --url <helius>`.
+- **Program ID:** `ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv` (devnet) —
+  set in `src/solana/escrowProgram.ts`'s `ESCROW_PROGRAM_ID`.
+- **Escrow authority:** generated with `solana-keygen new`, funded with 0.5
+  devnet SOL, secret saved to `.secrets/escrow-authority.json` (gitignored).
+  Pubkey `EqByujqS2bREAkUDZGvdGwjBJxkMCFYueU1a9yq6EQpw` is embedded (public,
+  fine to commit) in `src/solana/escrow.ts`'s `ESCROW_AUTHORITY_PUBKEY` — the
+  client needs it to build `create_match`'s `authority` arg. The secret goes
+  in `ESCROW_AUTHORITY_SECRET` (env var, `server/escrow.ts` reads it) — set
+  locally in `.env` and **still needs to be set in Render's dashboard**
+  (already declared `sync: false` in `render.yaml`, same pattern as
+  `COIN_MINT_SECRET`/`JWT_SECRET`). Optional `ESCROW_RPC_URL` env var points
+  at a non-public RPC (e.g. Helius) if the public devnet endpoint gets
+  rate-limited again.
+
+**How the deposit flow works** (`server/index.ts`'s `enqueue`/`handleStaked`/
+`failDeposit`, `src/components/OnlineMatch.tsx`'s `depositing` phase):
+pairing two players at stake > 0 doesn't start the battle immediately — a
+`matchId` is generated and one side is designated "creator" (deposits first
+via `create_match`) and the other "joiner" (`join_match`, which needs the
+match PDA to already exist, so it must come second — the server only tells
+the joiner to proceed once it's independently verified the creator's deposit
+landed on-chain). Once both deposits are confirmed (`verifyMatchFunded` reads
+the match PDA directly — never trusts the client's say-so), the real `Match`
+starts. A 60s deposit timeout, and immediate cleanup on disconnect/cancel/
+leave, calls `cancelMatch` (only one side deposited) or `refundMatch` (both
+deposited but something else went wrong) as appropriate. `Match`'s three
+end-of-battle paths (`resolveTurn`'s normal win, `timeUp`, `forfeit`) each
+call `settleMatch`/`refundMatch` with the winner already decided by the real
+`@pkmn/sim` simulation — same trust boundary as everything else server-side.
+
+**Verified live** (`verify-escrow-e2e.mts`, repo root, gitignored — rerun
+anytime against a locally running `npm run start`/`tsx server/index.ts`):
+two real devnet keypairs signed real transactions through the actual
+client-side tx builders (`src/solana/escrow.ts`), driving two scenarios end
+to end: (1) both deposit, one forfeits, the winner's balance increases by the
+full pot via the real on-chain `settle()`; (2) only the creator deposits,
+then disconnects — `cancel()` refunds them (confirmed by balance, not just a
+success log).
+
 - **Mainnet is a separate later decision** — real SOL costs real money (no
-  faucet), and real-money wagering is regulated gambling. Get this fully
-  verified on devnet and have the legal/licensing side actually in place
-  first.
+  faucet), and real-money wagering is regulated gambling. The program is
+  still unaudited; devnet verification is not the same bar as production.
+  Have the legal/licensing side actually in place first.
 
 ### 3. Nice-to-haves
 - Show W/L on the result screen; persist teams/profile server-side keyed by wallet.

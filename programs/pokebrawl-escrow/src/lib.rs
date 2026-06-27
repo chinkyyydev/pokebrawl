@@ -1,8 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::{transfer, Transfer};
 
-// Placeholder — Solana Playground sets the real program ID when you build/deploy.
-declare_id!("Escrow11111111111111111111111111111111111111");
+declare_id!("ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv");
 
 #[program]
 pub mod pokebrawl_escrow {

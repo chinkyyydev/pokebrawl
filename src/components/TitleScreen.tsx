@@ -18,14 +18,14 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
           {address ? '▶ ENTER STADIUM' : '▶ PLAY FREE'}
         </button>
 
-        <div className="title-or">— wallet login coming soon —</div>
+        <div className="title-or">— or connect a wallet —</div>
 
         {/* Wallet path: only ever talks to Phantom when this is clicked. */}
         <WalletButton />
       </div>
 
       <p className="title-foot">
-        Free vs CPU &amp; real trainers · SOL wagering coming soon · devnet
+        Free vs CPU &amp; real trainers · SOL wagering on devnet
       </p>
     </div>
   );

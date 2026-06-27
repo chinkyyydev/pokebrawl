@@ -1,0 +1,21 @@
+[package]
+name = "pokebrawl-escrow"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "pokebrawl_escrow"
+
+[features]
+no-entrypoint = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = "0.30.1"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1

@@ -25,3 +25,13 @@ services:
         sync: false
       - key: JWT_SECRET
         sync: false
+      # SOL wager escrow (devnet) — the authority keypair that signs
+      # settle/refund/cancel once a wagered match ends. Set in the Render
+      # dashboard, NOT here. See .secrets/escrow-authority.json (gitignored).
+      - key: ESCROW_AUTHORITY_SECRET
+        sync: false
+      # Optional: a custom devnet RPC endpoint (e.g. Helius) if the public
+      # clusterApiUrl('devnet') is rate-limited. Falls back to the public
+      # endpoint if unset.
+      - key: ESCROW_RPC_URL
+        sync: false

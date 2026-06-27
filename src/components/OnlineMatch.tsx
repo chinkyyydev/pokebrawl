@@ -6,8 +6,9 @@ import { Combatant, BattleControls, type Fx } from './BattleField';
 import { DialogBox } from './DialogBox';
 import { useWallet } from '../solana/wallet';
 import { useAuth } from '../state/auth';
+import { buildCreateMatchTx, buildJoinMatchTx } from '../solana/escrow';
 
-type Phase = 'connecting' | 'queued' | 'battle' | 'error';
+type Phase = 'connecting' | 'queued' | 'depositing' | 'battle' | 'error';
 
 /** Format a remaining match-clock duration as mm:ss, chess-clock style. */
 function fmtClock(ms: number): string {
@@ -32,10 +33,15 @@ export function OnlineMatch({
   const recordedRef = useRef(false); // ensure W/L is counted only once
   const logBoxRef = useRef<HTMLDivElement | null>(null);
 
-  const { address } = useWallet();
+  const { address, signAndSendTransaction } = useWallet();
   const { token } = useAuth();
   const [phase, setPhase] = useState<Phase>('connecting');
   const [opponent, setOpponent] = useState('');
+  const [matchId, setMatchId] = useState<number | null>(null);
+  const [isCreator, setIsCreator] = useState(false);
+  // Creator can deposit immediately; the joiner must wait for the creator's
+  // deposit to land on-chain first — join_match needs the match PDA to exist.
+  const [readyToDeposit, setReadyToDeposit] = useState(false);
   const [state, setState] = useState<BattleStateMsg | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [waiting, setWaiting] = useState(false); // submitted a choice, awaiting next turn
@@ -79,6 +85,38 @@ export function OnlineMatch({
     return () => clearInterval(id);
   }, [turnDeadline]);
 
+  // Build + sign the deposit transaction once it's our turn to deposit (the
+  // creator goes first; the joiner waits for 'opponentStaked').
+  useEffect(() => {
+    if (phase !== 'depositing' || !readyToDeposit || matchId == null) return;
+    if (!address) {
+      setEndNote('Connect your wallet to play a wagered match.');
+      setPhase('error');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const tx = isCreator
+          ? await buildCreateMatchTx({ matchId, stakeSol: stake, player: address })
+          : await buildJoinMatchTx({ matchId, player: address });
+        await signAndSendTransaction(tx);
+        if (cancelled) return;
+        clientRef.current?.send({ type: 'staked', matchId });
+      } catch (err) {
+        if (cancelled) return;
+        setEndNote(err instanceof Error ? err.message : 'Deposit failed.');
+        setPhase('error');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // readyToDeposit flips false->true exactly once per role; matchId/isCreator
+    // are stable for the lifetime of this deposit attempt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, readyToDeposit, matchId]);
+
   function handleMessage(msg: ServerMsg) {
     switch (msg.type) {
       case 'queued':
@@ -86,7 +124,24 @@ export function OnlineMatch({
         break;
       case 'matchFound':
         setOpponent(msg.opponentName);
+        if (stake > 0 && msg.matchId) {
+          setMatchId(msg.matchId);
+          setIsCreator(msg.isCreator);
+          setReadyToDeposit(msg.isCreator); // creator deposits first; joiner waits
+          setPhase('depositing');
+        } else {
+          setPhase('battle');
+        }
+        break;
+      case 'opponentStaked':
+        setReadyToDeposit(true); // creator's deposit confirmed — safe to join now
+        break;
+      case 'stakeConfirmed':
         setPhase('battle');
+        break;
+      case 'stakeFailed':
+        setEndNote(msg.message);
+        setPhase('error');
         break;
       case 'state':
         applyState(msg);
@@ -174,6 +229,24 @@ export function OnlineMatch({
     );
   }
 
+  if (phase === 'depositing') {
+    return (
+      <div className="scene online-scene">
+        <DialogBox speaker="STADIUM CLERK">
+          {isCreator
+            ? `Opening the match — approve the ${stake} SOL deposit in your wallet…`
+            : readyToDeposit
+              ? `Your opponent deposited — approve your ${stake} SOL deposit in your wallet…`
+              : 'Waiting for your opponent to deposit their stake…'}
+        </DialogBox>
+        <div className="searching">💰 Depositing on devnet…</div>
+        <button className="press-start" onClick={leave}>
+          ✕ Cancel
+        </button>
+      </div>
+    );
+  }
+
   if (phase === 'queued' || !state) {
     return (
       <div className="scene online-scene">
@@ -247,8 +320,8 @@ export function OnlineMatch({
           (stake === 0
             ? 'Free play — nothing wagered. GG!'
             : won
-              ? `(Payout of ~${stake * 2} SOL would settle here once Solana escrow is wired up.)`
-              : `(Your ${stake} SOL stake would go to the opponent here.)`)
+              ? `Payout of ~${stake * 2} SOL is settling to your devnet wallet now.`
+              : `Your ${stake} SOL stake has been sent to the opponent.`)
         }
         onChoose={choose}
         onExit={onExit}

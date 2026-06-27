@@ -4,6 +4,7 @@ import { teamIsReady, teamCount } from '../state/storage';
 import { monSprite } from '../data/sprites';
 import type { Team } from '../types';
 import { DialogBox } from './DialogBox';
+import { useWallet } from '../solana/wallet';
 
 const STAKE_TIERS = [0.1, 0.5, 1, 5, 10];
 
@@ -26,6 +27,7 @@ export function Lobby({
   const [picked, setPicked] = useState(defaultIdx);
   const [mode, setMode] = useState<'online' | 'practice'>('online');
   const isOnline = mode === 'online';
+  const { address, connect } = useWallet();
 
   const start = (stake: number) => {
     const members = profile.teams[picked].members;
@@ -37,8 +39,8 @@ export function Lobby({
     <div className="scene lobby-scene">
       <DialogBox speaker="STADIUM CLERK">
         Pick your team and mode. <strong>Practice</strong> is a free battle vs the CPU.
-        <strong> Online</strong> matches you against a real trainer for free, for fun. SOL
-        wagering is coming soon!
+        <strong> Online</strong> matches you against a real trainer — free for fun, or
+        wager devnet SOL with a connected wallet.
       </DialogBox>
 
       <div className="mode-toggle">
@@ -84,13 +86,26 @@ export function Lobby({
               <span className="tier-vs">vs real trainer</span>
               <span className="tier-pot muted">just for fun</span>
             </button>
-            {STAKE_TIERS.map((s) => (
-              <button key={s} className="tier locked" disabled title="SOL wagering is coming soon">
-                <span className="tier-amount">{s} SOL</span>
-                <span className="tier-vs">vs {s} SOL</span>
-                <span className="tier-pot muted">🔒 COMING SOON</span>
-              </button>
-            ))}
+            {STAKE_TIERS.map((s) =>
+              address ? (
+                <button key={s} className="tier" onClick={() => start(s)}>
+                  <span className="tier-amount">{s} SOL</span>
+                  <span className="tier-vs">vs {s} SOL</span>
+                  <span className="tier-pot muted">winner takes {s * 2} SOL</span>
+                </button>
+              ) : (
+                <button
+                  key={s}
+                  className="tier"
+                  onClick={connect}
+                  title="Connect a wallet to wager devnet SOL"
+                >
+                  <span className="tier-amount">{s} SOL</span>
+                  <span className="tier-vs">vs {s} SOL</span>
+                  <span className="tier-pot muted">👛 connect wallet</span>
+                </button>
+              ),
+            )}
           </div>
         </>
       ) : (
@@ -111,8 +126,8 @@ export function Lobby({
       </div>
 
       <p className="disclaimer">
-        ⚠️ SOL wagering is coming soon. Real-money wagering is gambling and is heavily
-        regulated — testing will run on Solana <strong>devnet</strong> first, with no real value.
+        ⚠️ SOL wagering runs on Solana <strong>devnet</strong> only — devnet SOL has no real
+        value. Real-money wagering is gambling and is heavily regulated; this is not that.
       </p>
     </div>
   );

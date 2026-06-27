@@ -12,8 +12,9 @@
 import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
-// TODO: replace once deployed via Solana Playground (see RESUME.md).
-export const ESCROW_PROGRAM_ID = 'REPLACE_WITH_ESCROW_PROGRAM_ID';
+// Deployed to devnet (built + deployed locally via cargo-build-sbf + solana CLI,
+// see RESUME.md). Override with ESCROW_PROGRAM_ID env var if redeployed elsewhere.
+export const ESCROW_PROGRAM_ID = 'ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv';
 
 export function programId(): PublicKey {
   return new PublicKey(ESCROW_PROGRAM_ID);
@@ -165,3 +166,8 @@ export function decodeMatchAccount(data: Buffer): MatchAccount {
 }
 
 export const SYSTEM_PROGRAM_DEFAULT = PublicKey.default; // Pubkey::default() in Rust = all-zero
+
+const LAMPORTS_PER_SOL = 1_000_000_000;
+export function solToLamports(sol: number): number {
+  return Math.round(sol * LAMPORTS_PER_SOL);
+}

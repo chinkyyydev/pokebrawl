@@ -30,11 +30,18 @@ export type ClientMsg =
   | { type: 'queue'; stake: number; token: string; wallet: string; team: PokemonSet[] }
   | { type: 'cancel' }
   | { type: 'choice'; choice: string }
-  | { type: 'leave' };
+  | { type: 'leave' }
+  | { type: 'staked'; matchId: number }; // my devnet deposit tx confirmed client-side
 
 export type ServerMsg =
   | { type: 'queued'; stake: number; players: number }
-  | { type: 'matchFound'; opponentName: string; opponentWallet: string }
+  // matchId is 0 for free play (no escrow involved). isCreator only matters
+  // when stake > 0: the creator deposits first (create_match), since
+  // join_match requires the match PDA to already exist on-chain.
+  | { type: 'matchFound'; opponentName: string; opponentWallet: string; matchId: number; isCreator: boolean }
+  | { type: 'opponentStaked' } // (joiner only) creator's deposit confirmed on-chain — safe to join now
+  | { type: 'stakeConfirmed' } // both deposits confirmed — battle is starting
+  | { type: 'stakeFailed'; message: string }
   | BattleStateMsg
   | { type: 'timeUp'; youWon: boolean } // a player's match clock hit zero
   | { type: 'opponentLeft' }
