@@ -37,3 +37,14 @@ CREATE TABLE IF NOT EXISTS pending_settlements (
 
 CREATE INDEX IF NOT EXISTS pending_settlements_unresolved_idx
   ON pending_settlements (created_at) WHERE resolved_at IS NULL;
+
+-- Single-row runtime kill-switch — lets wagering be paused instantly via the
+-- /api/admin/wagering endpoint (server/index.ts) without a redeploy, in case
+-- the escrow authority key is ever suspected compromised. Free play/practice
+-- are unaffected either way.
+CREATE TABLE IF NOT EXISTS app_flags (
+  id INT PRIMARY KEY DEFAULT 1,
+  wagering_paused BOOLEAN NOT NULL DEFAULT false,
+  CONSTRAINT app_flags_singleton CHECK (id = 1)
+);
+INSERT INTO app_flags (id, wagering_paused) VALUES (1, false) ON CONFLICT (id) DO NOTHING;

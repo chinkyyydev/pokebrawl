@@ -22,6 +22,7 @@ import {
   authFromHeader,
   clientIp,
   hashPassword,
+  isAdminRequest,
   MAX_ACCOUNTS_PER_IP,
   passwordError,
   signToken,
@@ -35,11 +36,13 @@ import {
   findById,
   findByUsername,
   findByWallet,
+  isWageringPaused,
   listUnresolvedSettlements,
   markSettlementAttemptFailed,
   markSettlementResolved,
   recordFailedSettlement,
   saveProfile,
+  setWageringPaused,
   type CancelPayload,
   type RefundPayload,
   type SettlePayload,
@@ -47,6 +50,7 @@ import {
 import {
   cancelMatch,
   escrowAuthority,
+  getEscrowAuthorityBalance,
   getMatch,
   isOurMatch,
   refundMatch,
@@ -205,6 +209,35 @@ async function handleClaimReward(req: IncomingMessage, res: ServerResponse): Pro
     console.error('claim-reward failed:', err);
     sendJson(res, 500, { ok: false, error: 'Mint failed' });
   }
+}
+
+// Admin-only: the wagering kill-switch + a quick operational snapshot. Auth
+// is a single shared secret (ADMIN_SECRET, see auth.ts's isAdminRequest) —
+// deliberately separate from the player session system. Endpoints are fully
+// disabled (404) unless ADMIN_SECRET is actually set.
+async function handleAdminWagering(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isAdminRequest(req)) return sendJson(res, 401, { error: 'Unauthorized' });
+  const { paused } = await readJsonBody(req);
+  if (typeof paused !== 'boolean') return sendJson(res, 400, { error: 'Body must be { paused: boolean }' });
+  await setWageringPaused(paused);
+  console.log(`🛑 Wagering ${paused ? 'PAUSED' : 'RESUMED'} via admin endpoint.`);
+  sendJson(res, 200, { ok: true, paused });
+}
+
+async function handleAdminStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isAdminRequest(req)) return sendJson(res, 401, { error: 'Unauthorized' });
+  const [paused, pending, balance] = await Promise.all([
+    isWageringPaused(),
+    listUnresolvedSettlements(),
+    getEscrowAuthorityBalance(),
+  ]);
+  sendJson(res, 200, {
+    wageringPaused: paused,
+    escrowAuthorityConfigured: !!escrowAuthority,
+    escrowAuthorityBalanceSol: balance != null ? balance / 1e9 : null,
+    unresolvedSettlements: pending.length,
+    oldestUnresolvedAttempts: pending[0]?.attempts ?? null,
+  });
 }
 
 // Pokémon Champions-style clock: one visible 45s timer per turn, backed by a
@@ -537,6 +570,49 @@ function dequeue(client: Client): void {
   for (const [stake, list] of queues) queues.set(stake, list.filter((c) => c !== client));
 }
 
+async function handleQueue(
+  client: Client,
+  ws: WebSocket,
+  msg: { type: 'queue'; stake: number; token: string; wallet: string; team: PokemonSet[] },
+): Promise<void> {
+  // Identity comes from the verified session token, never from the
+  // client-sent payload — same "never trust the client" principle as
+  // the team-legality check below, just applied to who you're allowed
+  // to claim to be in a match.
+  const auth = verifyToken(msg.token);
+  if (!auth) {
+    send(ws, { type: 'error', message: 'Please log in again.' });
+    return;
+  }
+  // Never trust the client's stake value either — must be free play or
+  // one of the real tiers, not an arbitrary/garbage number.
+  if (msg.stake !== 0 && !(STAKE_TIERS as readonly number[]).includes(msg.stake)) {
+    send(ws, { type: 'error', message: 'Invalid stake amount.' });
+    return;
+  }
+  // Fail fast if wagering can't actually be settled right now, rather
+  // than pairing two players into a deposit flow that's doomed to get
+  // stuck (e.g. ESCROW_AUTHORITY_SECRET unset/misconfigured in prod, or
+  // the kill-switch flipped via /api/admin/wagering).
+  if (msg.stake > 0 && (!escrowAuthority || (await isWageringPaused()))) {
+    send(ws, { type: 'error', message: 'SOL wagering is temporarily unavailable — try free play.' });
+    return;
+  }
+  // Teams are validated server-side — never trust the client with money on
+  // the line. (Full legality validation — move legality, EV/IV limits — is
+  // still TODO before mainnet; this enforces the competitive ban list.)
+  if (!Array.isArray(msg.team) || msg.team.length === 0) {
+    send(ws, { type: 'error', message: 'You need a team to queue.' });
+    return;
+  }
+  const banned = teamBanViolation(msg.team);
+  if (banned) {
+    send(ws, { type: 'error', message: `Illegal team: ${banned}.` });
+    return;
+  }
+  enqueue(client, msg.stake, auth.username, msg.wallet ?? '', msg.team);
+}
+
 /** The client's own RPC may see a deposit confirm slightly before the
  * server's does (different endpoints, brief replication lag) — retry for a
  * few seconds rather than failing a real deposit on a single stale read. */
@@ -710,6 +786,67 @@ setTimeout(() => {
   retryPendingSettlements().catch((err) => console.error('retryPendingSettlements crashed:', err));
 }, 5_000);
 
+// ---------------------------------------------------------------------------
+// Operational monitoring: the escrow authority never holds pooled stakes
+// itself (those sit in per-match PDAs) — it only spends tiny tx fees, so its
+// balance should stay roughly flat over time. Two things genuinely need a
+// human: running low on fee money (settle/refund/cancel calls start failing
+// outright), or a settlement that keeps failing even after several retries
+// (something's actually wrong, not just transient). Alerts go to
+// ALERT_WEBHOOK_URL (Discord-compatible POST) if set, console.error either
+// way (visible in Render's logs as a fallback).
+// ---------------------------------------------------------------------------
+const ALERT_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;
+const MONITOR_INTERVAL_MS = 5 * 60_000;
+const LOW_BALANCE_THRESHOLD_SOL = 0.05;
+const STUCK_SETTLEMENT_ATTEMPTS = 5;
+const ALERT_COOLDOWN_MS = 60 * 60_000; // don't re-alert the same issue more than once/hour
+
+const lastAlertAt = new Map<string, number>();
+
+async function sendAlert(key: string, message: string): Promise<void> {
+  const last = lastAlertAt.get(key) ?? 0;
+  if (Date.now() - last < ALERT_COOLDOWN_MS) return;
+  lastAlertAt.set(key, Date.now());
+  console.error(`🚨 ALERT [${key}]: ${message}`);
+  if (!ALERT_WEBHOOK_URL) return;
+  try {
+    await fetch(ALERT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `🚨 PokéBrawl: ${message}` }),
+    });
+  } catch (err) {
+    console.error('Failed to send alert webhook:', err);
+  }
+}
+
+async function runOperationalChecks(): Promise<void> {
+  const balanceLamports = await getEscrowAuthorityBalance().catch(() => null);
+  if (balanceLamports != null) {
+    const sol = balanceLamports / 1e9;
+    if (sol < LOW_BALANCE_THRESHOLD_SOL) {
+      await sendAlert(
+        'low-balance',
+        `Escrow authority balance is low: ${sol.toFixed(4)} SOL (threshold ${LOW_BALANCE_THRESHOLD_SOL}). Top it up or settle/refund/cancel calls will start failing.`,
+      );
+    }
+  }
+
+  const pending = await listUnresolvedSettlements().catch(() => []);
+  const stuck = pending.filter((p) => p.attempts >= STUCK_SETTLEMENT_ATTEMPTS);
+  if (stuck.length > 0) {
+    await sendAlert(
+      'stuck-settlements',
+      `${stuck.length} settlement(s) have failed ${STUCK_SETTLEMENT_ATTEMPTS}+ times and are still unresolved (match ids: ${stuck.map((p) => p.matchId).join(', ')}). Check pending_settlements in the DB — this needs a human.`,
+    );
+  }
+}
+
+setInterval(() => {
+  runOperationalChecks().catch((err) => console.error('runOperationalChecks crashed:', err));
+}, MONITOR_INTERVAL_MS);
+
 // HTTP server: serves the built game, the account + coin-reward APIs, and
 // answers Render's health check.
 const httpServer = createServer(async (req, res) => {
@@ -732,6 +869,10 @@ const httpServer = createServer(async (req, res) => {
         case '/api/profile':
           if (req.method === 'PUT') return void (await handlePutProfile(req, res));
           return void (await handleGetProfile(req, res));
+        case '/api/admin/wagering':
+          return void (await handleAdminWagering(req, res));
+        case '/api/admin/status':
+          return void (await handleAdminStatus(req, res));
         default:
           return sendJson(res, 404, { error: 'Not found' });
       }
@@ -766,44 +907,9 @@ wss.on('connection', (ws) => {
       case 'staked':
         handleStaked(client, msg.matchId).catch((err) => console.error('staked handler failed:', err));
         break;
-      case 'queue': {
-        // Identity comes from the verified session token, never from the
-        // client-sent payload — same "never trust the client" principle as
-        // the team-legality check below, just applied to who you're allowed
-        // to claim to be in a match.
-        const auth = verifyToken(msg.token);
-        if (!auth) {
-          send(ws, { type: 'error', message: 'Please log in again.' });
-          return;
-        }
-        // Never trust the client's stake value either — must be free play or
-        // one of the real tiers, not an arbitrary/garbage number.
-        if (msg.stake !== 0 && !(STAKE_TIERS as readonly number[]).includes(msg.stake)) {
-          send(ws, { type: 'error', message: 'Invalid stake amount.' });
-          return;
-        }
-        // Fail fast if wagering can't actually be settled right now, rather
-        // than pairing two players into a deposit flow that's doomed to get
-        // stuck (e.g. ESCROW_AUTHORITY_SECRET unset/misconfigured in prod).
-        if (msg.stake > 0 && !escrowAuthority) {
-          send(ws, { type: 'error', message: 'SOL wagering is temporarily unavailable — try free play.' });
-          return;
-        }
-        // Teams are validated server-side — never trust the client with money on
-        // the line. (Full legality validation — move legality, EV/IV limits — is
-        // still TODO before mainnet; this enforces the competitive ban list.)
-        if (!Array.isArray(msg.team) || msg.team.length === 0) {
-          send(ws, { type: 'error', message: 'You need a team to queue.' });
-          return;
-        }
-        const banned = teamBanViolation(msg.team);
-        if (banned) {
-          send(ws, { type: 'error', message: `Illegal team: ${banned}.` });
-          return;
-        }
-        enqueue(client, msg.stake, auth.username, msg.wallet ?? '', msg.team);
+      case 'queue':
+        handleQueue(client, ws, msg).catch((err) => console.error('queue handler failed:', err));
         break;
-      }
       case 'choice':
         if (client.side && client.match) client.match.onChoice(client.side, msg.choice);
         break;

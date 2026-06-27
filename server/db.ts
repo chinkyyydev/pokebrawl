@@ -130,3 +130,19 @@ export async function markSettlementAttemptFailed(id: number, error: string): Pr
 export async function markSettlementResolved(id: number): Promise<void> {
   await pool.query('UPDATE pending_settlements SET resolved_at = now() WHERE id = $1', [id]);
 }
+
+// --- Wagering kill-switch ----------------------------------------------------
+// Persisted (not just in-memory) so a pause survives a server restart/redeploy
+// — see /api/admin/wagering in server/index.ts.
+
+export async function isWageringPaused(): Promise<boolean> {
+  const res = await pool.query('SELECT wagering_paused FROM app_flags WHERE id = 1');
+  return res.rows[0]?.wagering_paused ?? false;
+}
+
+export async function setWageringPaused(paused: boolean): Promise<void> {
+  await pool.query(
+    'INSERT INTO app_flags (id, wagering_paused) VALUES (1, $1) ON CONFLICT (id) DO UPDATE SET wagering_paused = $1',
+    [paused],
+  );
+}

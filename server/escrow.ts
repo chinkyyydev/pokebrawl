@@ -26,6 +26,14 @@ export async function getMatch(matchId: number): Promise<MatchAccount | null> {
   return info ? decodeMatchAccount(info.data) : null;
 }
 
+/** SOL the escrow authority has for tx fees — never holds pooled stakes
+ * itself (those sit in per-match PDAs), so this should stay roughly flat
+ * over time aside from fee drain; used by the balance-monitoring loop. */
+export async function getEscrowAuthorityBalance(): Promise<number | null> {
+  if (!escrowAuthority) return null;
+  return connection.getBalance(escrowAuthority.publicKey);
+}
+
 /** A match is only safe to treat as ours if its stored `authority` is really
  * us — `create_match` accepts that pubkey as a bare argument with no on-chain
  * validation, so anyone can create a match naming themselves (or anyone) as

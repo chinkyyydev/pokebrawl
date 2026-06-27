@@ -35,3 +35,13 @@ services:
       # endpoint if unset.
       - key: ESCROW_RPC_URL
         sync: false
+      # Shared secret for /api/admin/wagering (kill-switch) and
+      # /api/admin/status. Admin endpoints are fully disabled (404) until
+      # this is set. Set in the Render dashboard, NOT here.
+      - key: ADMIN_SECRET
+        sync: false
+      # Optional: a Discord-compatible webhook URL — operational alerts
+      # (escrow authority low on fee SOL, a settlement stuck after repeated
+      # retries) get posted here. Falls back to server logs only if unset.
+      - key: ALERT_WEBHOOK_URL
+        sync: false

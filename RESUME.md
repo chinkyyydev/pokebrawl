@@ -261,10 +261,61 @@ full pot via the real on-chain `settle()`; (2) only the creator deposits,
 then disconnects — `cancel()` refunds them (confirmed by balance, not just a
 success log).
 
+**Security audit (self-review)**: found and fixed 3 real bugs — (1) critical:
+`create_match` accepted an arbitrary `authority` argument with no on-chain
+validation; an attacker could've created a match naming themselves as
+authority and stolen an honest opponent's stake regardless of the real
+battle outcome. Fixed with `isOurMatch()` in `server/escrow.ts`, verified
+blocked with a scripted attack (`verify-authority-attack.mts`). (2) A race
+between the 60s deposit timeout and a last-second deposit confirmation could
+leave the server and clients in contradictory states — fixed with a
+liveness re-check in `handleStaked()`. (3) `winnerSide()` in
+`src/game/battle.ts` manually re-derived the winner from `pokemonLeft`
+instead of trusting the sim's own authoritative `battle.winner` — proven via
+direct sim testing that this never reliably catches a true mutual KO (e.g.
+both Pokémon dying to Explosion), meaning a legitimate tie could have
+silently paid the full pot to the wrong side. Fixed to read `battle.winner`
+directly.
+
+**Settlement reliability**: a failed settle/refund/cancel call (network
+blip, authority briefly out of fee SOL) used to just get `console.error`'d
+and forgotten. Now recorded in Postgres (`pending_settlements` table,
+`server/schema.sql`) and retried automatically every 30s — including after a
+server restart — until it succeeds. The on-chain `settled` guard makes
+retrying an already-succeeded one harmless. Verified for real
+(`verify-settlement-retry.mts`): created a genuinely funded match,
+hand-inserted a simulated failure, restarted the server fresh, watched its
+background loop find it and pay out correctly with no further input.
+
+**Operational hardening** (chose lighter hardening over a full multisig —
+keeps settling fully automatic):
+- **Kill-switch**: `POST /api/admin/wagering` with body `{"paused": true}`
+  instantly stops new wagered matches from being queued (free play/practice
+  unaffected) — useful if the escrow authority key is ever suspected
+  compromised. Persisted in Postgres (`app_flags` table), survives a
+  restart. `POST .../wagering` with `{"paused": false}` resumes.
+- **Status snapshot**: `GET /api/admin/status` returns
+  `wageringPaused`/`escrowAuthorityBalanceSol`/`unresolvedSettlements`.
+- Both require `Authorization: Bearer <ADMIN_SECRET>` (constant-time
+  compared in `auth.ts`'s `isAdminRequest`) — fully disabled (404s) until
+  `ADMIN_SECRET` is set. Set it in Render's dashboard like the other
+  secrets.
+- **Monitoring**: a background loop (every 5 min) alerts if the escrow
+  authority's SOL balance drops below 0.05 (it only ever spends tx fees —
+  pooled stakes live in per-match PDAs, not its own wallet — so a falling
+  balance just means it needs a top-up, not that anything's wrong) or if any
+  settlement has failed 5+ retries in a row (that one needs a human). Alerts
+  post to `ALERT_WEBHOOK_URL` if set (any Discord-compatible webhook) and
+  always log to the console either way.
+- **Key hygiene confirmed**: `ESCROW_AUTHORITY_SECRET` has never been logged
+  or committed (checked git history directly); it only ever lives in
+  Render's dashboard env var and the local gitignored `.env`/`.secrets/`.
+
 - **Mainnet is a separate later decision** — real SOL costs real money (no
-  faucet), and real-money wagering is regulated gambling. The program is
-  still unaudited; devnet verification is not the same bar as production.
-  Have the legal/licensing side actually in place first.
+  faucet), and real-money wagering is regulated gambling. The escrow program
+  has had a thorough self-review (above) but not an independent third-party
+  audit — the standard practice for a financial contract before real money
+  touches it. Have the legal/licensing side actually in place first.
 
 ### 3. Nice-to-haves
 - Show W/L on the result screen; persist teams/profile server-side keyed by wallet.
