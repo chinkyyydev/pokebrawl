@@ -144,7 +144,7 @@ export function BattleControls({
               <button
                 key={m.slot}
                 className="move-btn"
-                disabled={m.disabled || m.pp <= 0}
+                disabled={m.disabled}
                 onClick={() => onChoose(`move ${m.slot}`)}
               >
                 <span className="move-name">{m.name}</span>

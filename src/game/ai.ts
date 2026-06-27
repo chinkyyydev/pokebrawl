@@ -14,7 +14,13 @@ export function chooseCpuMove(ctrl: BattleController, side: SideID = 'p2'): stri
     return target ? `switch ${target.slot}` : 'pass';
   }
 
-  const usable = req.moves.filter((m) => !m.disabled && m.pp > 0);
+  // Trust `disabled` alone — a locked continuation move (Recharge, mid-charge
+  // Solar Beam/Dig, Uproar-lock) is reported with pp 0 but disabled: false on
+  // purpose (the sim's contract, see Pokemon.getMoves()); also requiring
+  // pp > 0 here wrongly excludes it, leaving only switches, which the sim then
+  // rejects since you can't switch out of a forced continuation — that combo
+  // is exactly what caused "Not all choices done" to repeat every turn.
+  const usable = req.moves.filter((m) => !m.disabled);
   if (usable.length > 0) {
     const pick = usable[Math.floor(Math.random() * usable.length)];
     return `move ${pick.slot}`;
@@ -41,7 +47,13 @@ export function chooseTopMove(ctrl: BattleController, side: SideID): string {
     return target ? `switch ${target.slot}` : 'pass';
   }
 
-  const usable = req.moves.filter((m) => !m.disabled && m.pp > 0);
+  // Trust `disabled` alone — a locked continuation move (Recharge, mid-charge
+  // Solar Beam/Dig, Uproar-lock) is reported with pp 0 but disabled: false on
+  // purpose (the sim's contract, see Pokemon.getMoves()); also requiring
+  // pp > 0 here wrongly excludes it, leaving only switches, which the sim then
+  // rejects since you can't switch out of a forced continuation — that combo
+  // is exactly what caused "Not all choices done" to repeat every turn.
+  const usable = req.moves.filter((m) => !m.disabled);
   if (usable.length > 0) return `move ${usable[0].slot}`;
 
   if (req.switches.length > 0) return `switch ${req.switches[0].slot}`;

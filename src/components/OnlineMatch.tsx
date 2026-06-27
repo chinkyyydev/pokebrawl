@@ -204,6 +204,13 @@ export function OnlineMatch({
 
   function leave() {
     clientRef.current?.send({ type: 'leave' });
+    // Forfeiting a live battle counts as a loss for you (your opponent's win
+    // is recorded server-side via 'opponentLeft' on their end) — but bailing
+    // out of matchmaking/depositing before a real battle started isn't a loss.
+    if (phase === 'battle' && !recordedRef.current) {
+      recordedRef.current = true;
+      onResult?.(false);
+    }
     onExit();
   }
 
