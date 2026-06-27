@@ -2,18 +2,24 @@
 // Unsigned transactions only — signing/sending happens via Phantom through
 // useWallet().signAndSendTransaction (src/solana/wallet.tsx), same pattern as
 // the coin-burn flow in coin.ts.
-import { Connection, PublicKey, Transaction, clusterApiUrl } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { createMatchIx, joinMatchIx, solToLamports } from './escrowProgram';
+import { API_URL } from '../net/client';
 
 // The game server's escrow authority — public, fine to embed (it's a pubkey,
 // not the secret). Only this address can settle/refund/cancel a match.
-export const ESCROW_AUTHORITY_PUBKEY = 'GhZtTz9ziPf2vwGBBZLh8J5ahffGuThMChn8AARTqQY2';
+// Override via ESCROW_AUTHORITY_PUBKEY (Node-only, same guard as
+// escrowProgram.ts's ESCROW_PROGRAM_ID override) so a devnet test script can
+// point at the matching devnet authority instead of mainnet's.
+const authorityOverride = typeof process !== 'undefined' ? process.env.ESCROW_AUTHORITY_PUBKEY : undefined;
+export const ESCROW_AUTHORITY_PUBKEY = authorityOverride || 'GhZtTz9ziPf2vwGBBZLh8J5ahffGuThMChn8AARTqQY2';
 
-// Public mainnet-beta RPC, not a metered/keyed endpoint — a provider API key
-// must never be embedded in client code (it'd be extractable from the
-// shipped JS bundle by anyone). The server uses a keyed endpoint privately
-// via ESCROW_RPC_URL for its own higher-frequency calls.
-const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
+// Routed through our own server's RPC proxy (server/index.ts's
+// handleRpcProxy), not Solana's public mainnet-beta endpoint directly — that
+// was too unreliable for real transactions ("failed to get recent
+// blockhash" in production). The proxy forwards to the server's own private,
+// keyed Helius endpoint, which never gets exposed to the browser bundle.
+const connection = new Connection(`${API_URL}/api/rpc`, 'confirmed');
 
 /** Player 1 opens the match and deposits their stake. */
 export async function buildCreateMatchTx(opts: {

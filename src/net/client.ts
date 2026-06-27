@@ -1,19 +1,27 @@
 import type { ClientMsg, ServerMsg } from './protocol';
 
+// `import.meta.env` is a Vite-only global — undefined when this module gets
+// loaded outside Vite (e.g. the gitignored *.mts test scripts run directly
+// via tsx). Guarded so those scripts can still import anything that pulls in
+// this module (like src/solana/escrow.ts) without crashing.
+const env = (import.meta as { env?: Record<string, string | boolean | undefined> }).env;
+const isBrowser = typeof location !== 'undefined';
+
 // Where the browser connects:
 //  - explicit override via VITE_WS_URL (if you ever split client/server hosts)
-//  - local dev: the separate `npm run server` process on :8080
+//  - local dev (or a plain Node/tsx script, e.g. a test): the separate
+//    `npm run server` process on :8080
 //  - production: same origin as the page (our Render service serves both)
 export const WS_URL =
-  (import.meta.env.VITE_WS_URL as string) ||
-  (import.meta.env.DEV
+  (env?.VITE_WS_URL as string) ||
+  (!isBrowser || env?.DEV
     ? 'ws://localhost:8080'
     : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
 
-/** Same origin logic as WS_URL, but for plain HTTP API calls (auth, coin). */
+/** Same origin logic as WS_URL, but for plain HTTP API calls (auth, coin, escrow RPC proxy). */
 export const API_URL =
-  (import.meta.env.VITE_API_URL as string) ||
-  (import.meta.env.DEV ? 'http://localhost:8080' : `${location.protocol}//${location.host}`);
+  (env?.VITE_API_URL as string) ||
+  (!isBrowser || env?.DEV ? 'http://localhost:8080' : `${location.protocol}//${location.host}`);
 
 /** Thin browser WebSocket wrapper that speaks our typed protocol. */
 export class NetClient {

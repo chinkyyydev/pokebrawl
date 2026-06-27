@@ -13,9 +13,13 @@ import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.j
 import { sha256 } from '@noble/hashes/sha2.js';
 
 // Deployed to mainnet-beta (built + deployed locally via cargo-build-sbf +
-// solana CLI, see RESUME.md). The devnet deployment (now superseded as the
-// primary target) was ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv.
-export const ESCROW_PROGRAM_ID = '5eXLrUexRtKcpJPP6jf6dntKZoueq6F9SzkycBdGxWCq';
+// solana CLI, see RESUME.md). The devnet deployment (kept live for testing)
+// is ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv — override via the
+// ESCROW_PROGRAM_ID env var (Node-only; this file is isomorphic, and
+// `process` doesn't exist in the browser, hence the typeof guard) to target
+// it from a test script without touching the production default.
+const programIdOverride = typeof process !== 'undefined' ? process.env.ESCROW_PROGRAM_ID : undefined;
+export const ESCROW_PROGRAM_ID = programIdOverride || '5eXLrUexRtKcpJPP6jf6dntKZoueq6F9SzkycBdGxWCq';
 
 export function programId(): PublicKey {
   return new PublicKey(ESCROW_PROGRAM_ID);

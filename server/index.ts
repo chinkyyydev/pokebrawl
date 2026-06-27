@@ -211,6 +211,105 @@ async function handleClaimReward(req: IncomingMessage, res: ServerResponse): Pro
   }
 }
 
+// Devnet/mainnet RPC proxy for the client's escrow Connection
+// (src/solana/escrow.ts). The client deliberately never embeds a keyed RPC
+// URL (anyone could extract a metered provider's API key from the shipped
+// JS bundle) — it points at this endpoint instead, and the server forwards
+// to its own private, keyed endpoint. The public mainnet-beta RPC alone
+// turned out too unreliable for real transactions ("failed to get recent
+// blockhash" in production) to rely on directly from the browser.
+//
+// web3.js sometimes batches several calls into one POST whose body is a
+// JSON array, not a single object — handled generically here rather than
+// reusing readJsonBody (which assumes a single object). Only a fixed
+// allowlist of read-only methods we actually use is forwarded; this is
+// otherwise an open proxy to a paid RPC key, so it's also rate-limited
+// per IP.
+const RPC_PROXY_ALLOWED_METHODS = new Set([
+  'getLatestBlockhash',
+  'getRecentBlockhash',
+  'getSignatureStatuses',
+  'getAccountInfo',
+  'getMultipleAccounts',
+  'getBalance',
+  'getVersion',
+  'getSlot',
+  'getEpochInfo',
+  'getBlockHeight',
+  'getMinimumBalanceForRentExemption',
+  'getFeeForMessage',
+]);
+
+const rpcRateLimit = new Map<string, { count: number; windowStart: number }>();
+const RPC_RATE_LIMIT_WINDOW_MS = 10_000;
+const RPC_RATE_LIMIT_MAX = 60; // generous for a normal deposit flow's handful of calls
+
+function checkRpcRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rpcRateLimit.get(ip);
+  if (!entry || now - entry.windowStart > RPC_RATE_LIMIT_WINDOW_MS) {
+    rpcRateLimit.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= RPC_RATE_LIMIT_MAX;
+}
+
+async function handleRpcProxy(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!checkRpcRateLimit(clientIp(req))) {
+    return sendJson(res, 429, { error: 'Too many RPC requests, slow down.' });
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString());
+  } catch {
+    return sendJson(res, 400, { error: 'Invalid JSON' });
+  }
+  const requests = Array.isArray(parsed) ? parsed : [parsed];
+  for (const r of requests) {
+    const method = (r as { method?: unknown } | null)?.method;
+    if (typeof method !== 'string' || !RPC_PROXY_ALLOWED_METHODS.has(method)) {
+      return sendJson(res, 400, { error: `RPC method not allowed: ${String(method)}` });
+    }
+  }
+  const upstreamUrl = process.env.ESCROW_RPC_URL ?? clusterApiUrl('mainnet-beta');
+  try {
+    if (!Array.isArray(parsed)) {
+      const upstream = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed),
+      });
+      const text = await upstream.text();
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json', ...CORS });
+      res.end(text);
+      return;
+    }
+    // web3.js sometimes batches concurrent calls into one array body, but
+    // Helius's free tier rejects batch requests outright (confirmed: a real
+    // 403 "Batch requests are only available for paid plans"). Un-batch and
+    // forward each individually instead, then re-bundle the responses in the
+    // same order — satisfies web3.js's expectation of an array response back
+    // without depending on a paid Helius tier.
+    const responses = await Promise.all(
+      requests.map(async (r) => {
+        const upstream = await fetch(upstreamUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(r),
+        });
+        return upstream.json();
+      }),
+    );
+    sendJson(res, 200, responses);
+  } catch (err) {
+    console.error('RPC proxy failed:', err);
+    sendJson(res, 502, { error: 'RPC proxy failed' });
+  }
+}
+
 // Admin-only: the wagering kill-switch + a quick operational snapshot. Auth
 // is a single shared secret (ADMIN_SECRET, see auth.ts's isAdminRequest) —
 // deliberately separate from the player session system. Endpoints are fully
@@ -873,6 +972,8 @@ const httpServer = createServer(async (req, res) => {
           return void (await handleAdminWagering(req, res));
         case '/api/admin/status':
           return void (await handleAdminStatus(req, res));
+        case '/api/rpc':
+          return void (await handleRpcProxy(req, res));
         default:
           return sendJson(res, 404, { error: 'Not found' });
       }
