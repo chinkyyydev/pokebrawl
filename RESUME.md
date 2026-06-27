@@ -1,7 +1,7 @@
 # PokéBrawl — Resume Notes (read this first on a new machine)
 
-A Pokémon Showdown-style 1v1 battler with online multiplayer and (devnet) Solana
-wagering. This file is the "pick up where we left off" guide.
+A Pokémon Showdown-style 1v1 battler with online multiplayer and real-money
+Solana (mainnet-beta) wagering. This file is the "pick up where we left off" guide.
 
 - **Live site:** https://poke-brawl.com (served by Render)
 - **GitHub:** https://github.com/chinkyyydev/pokebrawl
@@ -107,7 +107,8 @@ wagering. This file is the "pick up where we left off" guide.
   45s countdown → on timeout the server **auto-picks** a move (keeps the game moving).
 - **Solana:** wallet connect via Phantom (`src/solana/wallet.tsx`), wallet sent as identity
   on online queue. On-chain **escrow Anchor program** (`programs/pokebrawl-escrow/src/lib.rs`)
-  is deployed to devnet and fully wired up — see "SOL wager escrow" below.
+  is deployed to **mainnet-beta** (real money) and fully wired up — see "SOL
+  wager escrow" below.
 - **Refresh persistence:** the current scene is saved; refreshing resumes in town/research/
   lobby/builder instead of the title screen (`SCENE_KEY` in App.tsx).
 - **Mobile:** responsive CSS (`@media (max-width: 720px)` in `src/styles.css`).
@@ -191,11 +192,30 @@ return, mirroring **Pokémon TCG Pocket**. Design:
   - Differentiate platform: client sends `platform: 'mobile' | 'desktop'` in `queue`; server
     picks grace length. (Detect mobile via `navigator.maxTouchPoints`/userAgent.)
 
-### 2. SOL wager escrow (devnet) — ✅ LIVE
+### 2. SOL wager escrow — ✅ LIVE ON MAINNET-BETA (real money)
 SOL wagering is unlocked in the live UI (`Lobby.tsx`'s stake tiers, gated on
-a connected wallet) and fully wired end-to-end. The Poké Shop stays locked —
-that's a separate system (the PokéCoin SPL mint), unrelated to escrow, still
-not deployed (see "PokéCoin mint not yet created" above).
+a connected wallet) and fully wired end-to-end, **live on mainnet-beta with
+real SOL** — every user-facing string that used to say "devnet" or "no real
+value" was rewritten before launch (Lobby's disclaimer, the battle screen's
+deposit/payout copy, Rules, Title screen, Town, About Dev). The Poké Shop
+stays locked — that's a separate system (the PokéCoin SPL mint), unrelated to
+escrow, still not deployed (see "PokéCoin mint not yet created" above).
+
+**Mainnet addresses** (separate keys from devnet's, on purpose):
+- Program ID: `5eXLrUexRtKcpJPP6jf6dntKZoueq6F9SzkycBdGxWCq`
+- Escrow authority: `GhZtTz9ziPf2vwGBBZLh8J5ahffGuThMChn8AARTqQY2` (secret in
+  `.secrets/mainnet-escrow-authority.json`, gitignored, and in Render's
+  `ESCROW_AUTHORITY_SECRET`)
+- Deploy wallet: `6vaY2rpRwB6jAb3hVLJddRihpG1KfQ4jZgGztySfGhH2` (only needed
+  for the one-time deploy/upgrades; any leftover balance is just liquid SOL)
+- Client RPC is the **public** `clusterApiUrl('mainnet-beta')`, deliberately
+  not a keyed endpoint — a metered provider's API key must never be embedded
+  in client-shipped code (anyone could extract it from the bundle and burn
+  your quota). The server uses a keyed Helius endpoint privately via
+  `ESCROW_RPC_URL`.
+- Devnet deployment (superseded, kept for reference/testing):
+  `ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv`, authority
+  `EqByujqS2bREAkUDZGvdGwjBJxkMCFYueU1a9yq6EQpw`.
 
 **How it got deployed:** Solana Playground's deploy pipeline (beta.solpg.io)
 hit persistent 429 "Connection rate limits exceeded" errors regardless of
@@ -221,20 +241,34 @@ entirely by installing the Solana CLI **locally** instead:
   `pokebrawl_escrow-keypair.json` (the latter determines the real Program ID
   — `declare_id!` in `lib.rs` was updated to match it, then rebuilt).
   Deployed with `solana program deploy <.so> --program-id <keypair> --keypair
-  <funded wallet> --url <helius>`.
-- **Program ID:** `ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv` (devnet) —
-  set in `src/solana/escrowProgram.ts`'s `ESCROW_PROGRAM_ID`.
-- **Escrow authority:** generated with `solana-keygen new`, funded with 0.5
-  devnet SOL, secret saved to `.secrets/escrow-authority.json` (gitignored).
-  Pubkey `EqByujqS2bREAkUDZGvdGwjBJxkMCFYueU1a9yq6EQpw` is embedded (public,
+  <funded wallet> --url <helius>`. The mainnet deploy hit
+  `ExtendProgram requires a minimum of 10240 additional bytes` when
+  upgrading an existing devnet program in place (the new anchor 0.32.1
+  binary was bigger than the original allocation, and the protocol won't
+  extend by less than 10240 bytes at a time) — fixed with an explicit
+  `solana program extend <id> 10240` before retrying the deploy. A *fresh*
+  deploy (like mainnet's first-ever one) doesn't hit this, since it
+  allocates the right size from the start.
+- **Program ID:** `5eXLrUexRtKcpJPP6jf6dntKZoueq6F9SzkycBdGxWCq` (mainnet) —
+  set in `src/solana/escrowProgram.ts`'s `ESCROW_PROGRAM_ID`. (Devnet's was
+  `ALuiT5kBFx4ftHPi6Uo2zUwJadMLU31ouifbCVLMpPXv`, kept deployed for testing.)
+- **Escrow authority:** generated with `solana-keygen new`, funded with real
+  SOL, secret saved to `.secrets/mainnet-escrow-authority.json` (gitignored).
+  Pubkey `GhZtTz9ziPf2vwGBBZLh8J5ahffGuThMChn8AARTqQY2` is embedded (public,
   fine to commit) in `src/solana/escrow.ts`'s `ESCROW_AUTHORITY_PUBKEY` — the
   client needs it to build `create_match`'s `authority` arg. The secret goes
-  in `ESCROW_AUTHORITY_SECRET` (env var, `server/escrow.ts` reads it) — set
-  locally in `.env` and **still needs to be set in Render's dashboard**
-  (already declared `sync: false` in `render.yaml`, same pattern as
-  `COIN_MINT_SECRET`/`JWT_SECRET`). Optional `ESCROW_RPC_URL` env var points
-  at a non-public RPC (e.g. Helius) if the public devnet endpoint gets
-  rate-limited again.
+  in `ESCROW_AUTHORITY_SECRET` (env var, `server/escrow.ts` reads it) — set in
+  Render's dashboard (`sync: false` in `render.yaml`). `ESCROW_RPC_URL` is set
+  to a keyed Helius mainnet endpoint — strongly recommended over the public
+  RPC for real production traffic, not just an optional rate-limit dodge like
+  it was on devnet.
+- **Custody**: both mainnet keypairs (deploy wallet, escrow authority) were
+  generated with `--silent`, so no BIP39 seed phrase exists for either — the
+  raw secret key (the JSON byte array) is the actual credential and is fully
+  sufficient on its own; a seed phrase is just an alternate human-readable
+  format for the same secret, not a separate backup. Both were shown in full
+  (raw array + base58 for Phantom's "Import Private Key") so there's a copy
+  outside this machine, not solely reliant on the local `.secrets/` files.
 
 **How the deposit flow works** (`server/index.ts`'s `enqueue`/`handleStaked`/
 `failDeposit`, `src/components/OnlineMatch.tsx`'s `depositing` phase):
@@ -252,14 +286,18 @@ end-of-battle paths (`resolveTurn`'s normal win, `timeUp`, `forfeit`) each
 call `settleMatch`/`refundMatch` with the winner already decided by the real
 `@pkmn/sim` simulation — same trust boundary as everything else server-side.
 
-**Verified live** (`verify-escrow-e2e.mts`, repo root, gitignored — rerun
-anytime against a locally running `npm run start`/`tsx server/index.ts`):
-two real devnet keypairs signed real transactions through the actual
-client-side tx builders (`src/solana/escrow.ts`), driving two scenarios end
-to end: (1) both deposit, one forfeits, the winner's balance increases by the
-full pot via the real on-chain `settle()`; (2) only the creator deposits,
-then disconnects — `cancel()` refunds them (confirmed by balance, not just a
-success log).
+**Verified live, twice** — once thoroughly on devnet before launch
+(`verify-escrow-e2e.mts`, repo root, gitignored — rerun anytime against a
+locally running `npm run start`/`tsx server/index.ts`): real devnet keypairs
+signing real transactions through the actual client-side tx builders
+(`src/solana/escrow.ts`), driving two scenarios end to end — (1) both
+deposit, one forfeits, the winner's balance increases by the full pot via
+the real on-chain `settle()`; (2) only the creator deposits, then
+disconnects — `cancel()` refunds them. Then for real on mainnet via the live
+site itself: real two-wallet matches, decoded straight off-chain
+(`getSignaturesForAddress`/`getTransaction` against the program ID) to
+independently confirm deposits and payouts landed exactly right, not just
+trusting the UI.
 
 **Security audit (self-review)**: found and fixed 3 real bugs — (1) critical:
 `create_match` accepted an arbitrary `authority` argument with no on-chain
@@ -276,6 +314,23 @@ direct sim testing that this never reliably catches a true mutual KO (e.g.
 both Pokémon dying to Explosion), meaning a legitimate tie could have
 silently paid the full pot to the wrong side. Fixed to read `battle.winner`
 directly.
+
+**Dependency audits** (the realistic "free" alternative to a paid third-party
+audit — real signal, not equivalent to one): `cargo audit` on the Rust
+program found a real timing side-channel (`curve25519-dalek`, transitive via
+the old `solana-program` SDK version, not our own code) plus 7 "unmaintained
+crate" warnings. Fixed by upgrading `anchor-lang` 0.30.1 → 0.32.1, which
+dropped the vulnerable dependency entirely and 6 of the 7 warnings as a side
+effect (only `bincode`'s remains, no maintained replacement available in
+this chain) — redeployed the upgraded binary to devnet first and re-ran the
+full verification + adversarial-attack suite before ever touching mainnet
+with it. `npm audit` on the Node side found 10; fixed `uuid`'s (safe
+`overrides` bump, verified working) — the other 5 (`bigint-buffer`,
+`esbuild`/`vite`) don't have a responsible quick fix (no patched
+`bigint-buffer` exists upstream at all, and it's unreachable anyway since
+the PokéCoin feature it'd run through has never been configured in
+production; the `esbuild`/`vite` one only affects `vite dev`'s local server,
+not the deployed app).
 
 **Settlement reliability**: a failed settle/refund/cancel call (network
 blip, authority briefly out of fee SOL) used to just get `console.error`'d
@@ -311,11 +366,21 @@ keeps settling fully automatic):
   or committed (checked git history directly); it only ever lives in
   Render's dashboard env var and the local gitignored `.env`/`.secrets/`.
 
-- **Mainnet is a separate later decision** — real SOL costs real money (no
-  faucet), and real-money wagering is regulated gambling. The escrow program
-  has had a thorough self-review (above) but not an independent third-party
-  audit — the standard practice for a financial contract before real money
-  touches it. Have the legal/licensing side actually in place first.
+- **Mainnet: launched.** The user confirmed legal/licensing was finalized
+  before flipping this on. The escrow program has had a thorough self-review
+  plus two free dependency-vulnerability scans (above) — explicitly **not**
+  an independent third-party audit (the standard practice for a financial
+  contract before real money touches it); that tradeoff was made
+  consciously, not by default, after laying out what each path costs in time
+  vs. assurance. Worth revisiting if stakes/volume grow significantly.
+- **Residual risk that's still real, by design, not fixed**: a leaked
+  `ESCROW_AUTHORITY_SECRET` lets whoever has it sign `settle`/`refund`/
+  `cancel` directly on-chain — no server-side code can stop that, since
+  they'd bypass the server entirely. Chose lighter operational hardening
+  (kill-switch + monitoring, above) over a full multisig (e.g. Squads
+  Protocol) to keep settling fully automatic. If stakes/volume ever grow
+  enough to justify it, multisig is the real fix for this specific gap, not
+  more server-side validation.
 
 ### 3. Nice-to-haves
 - Show W/L on the result screen; persist teams/profile server-side keyed by wallet.
