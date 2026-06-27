@@ -28,6 +28,9 @@
     "tsx": "^4.19.2",
     "ws": "^8.18.0"
   },
+  "overrides": {
+    "uuid": "^14.0.1"
+  },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.10",
