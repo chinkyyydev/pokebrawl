@@ -6,7 +6,7 @@ import { Combatant, BattleControls, type Fx } from './BattleField';
 import { DialogBox } from './DialogBox';
 import { useWallet } from '../solana/wallet';
 import { useAuth } from '../state/auth';
-import { buildCreateMatchTx, buildJoinMatchTx } from '../solana/escrow';
+import { buildCreateMatchTx, buildJoinMatchTx, confirmDeposit } from '../solana/escrow';
 
 type Phase = 'connecting' | 'queued' | 'depositing' | 'battle' | 'error';
 
@@ -100,7 +100,9 @@ export function OnlineMatch({
         const tx = isCreator
           ? await buildCreateMatchTx({ matchId, stakeSol: stake, player: address })
           : await buildJoinMatchTx({ matchId, player: address });
-        await signAndSendTransaction(tx);
+        const signature = await signAndSendTransaction(tx);
+        if (cancelled) return;
+        await confirmDeposit(signature); // wait for it to actually land, not just submit
         if (cancelled) return;
         clientRef.current?.send({ type: 'staked', matchId });
       } catch (err) {

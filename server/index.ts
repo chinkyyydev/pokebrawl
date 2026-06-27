@@ -500,6 +500,22 @@ function dequeue(client: Client): void {
   for (const [stake, list] of queues) queues.set(stake, list.filter((c) => c !== client));
 }
 
+/** The client's own RPC may see a deposit confirm slightly before the
+ * server's does (different endpoints, brief replication lag) — retry for a
+ * few seconds rather than failing a real deposit on a single stale read. */
+async function retryUntil<T>(
+  check: () => Promise<T | null>,
+  attempts = 5,
+  delayMs = 1200,
+): Promise<T | null> {
+  for (let i = 0; i < attempts; i++) {
+    const result = await check().catch(() => null);
+    if (result) return result;
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return null;
+}
+
 /** A client confirmed (client-side) that their deposit transaction landed.
  * Never trust that alone — re-derive everything from the chain. */
 async function handleStaked(client: Client, matchId: number): Promise<void> {
@@ -510,10 +526,13 @@ async function handleStaked(client: Client, matchId: number): Promise<void> {
   }
 
   const expectedLamports = solToLamports(pending.stake);
-  const onChain = await getMatch(matchId).catch(() => null);
 
   if (client === pending.creator) {
-    if (!onChain || onChain.player1.toBase58() !== client.wallet || onChain.stakeLamports !== expectedLamports) {
+    const onChain = await retryUntil(async () => {
+      const m = await getMatch(matchId);
+      return m && m.player1.toBase58() === client.wallet && m.stakeLamports === expectedLamports ? m : null;
+    });
+    if (!onChain) {
       send(client.ws, { type: 'stakeFailed', message: 'Deposit not found on-chain yet — try again.' });
       return;
     }
@@ -527,8 +546,13 @@ async function handleStaked(client: Client, matchId: number): Promise<void> {
     send(client.ws, { type: 'stakeFailed', message: 'Waiting on the other player’s deposit.' });
     return;
   }
-  const funded = await verifyMatchFunded(matchId, expectedLamports);
-  if (!funded || !onChain || onChain.player2.toBase58() !== client.wallet) {
+  const onChain = await retryUntil(async () => {
+    const funded = await verifyMatchFunded(matchId, expectedLamports);
+    if (!funded) return null;
+    const m = await getMatch(matchId);
+    return m && m.player2.toBase58() === client.wallet ? m : null;
+  });
+  if (!onChain) {
     send(client.ws, { type: 'stakeFailed', message: 'Deposit not found on-chain yet — try again.' });
     return;
   }

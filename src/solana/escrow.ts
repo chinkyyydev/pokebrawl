@@ -44,3 +44,10 @@ export async function buildJoinMatchTx(opts: {
   tx.feePayer = player;
   return tx;
 }
+
+/** Wait for the deposit to actually land before telling the server about it —
+ * Phantom's signAndSendTransaction returns as soon as it's submitted, not
+ * once it's confirmed, so sending 'staked' immediately races the chain. */
+export async function confirmDeposit(signature: string): Promise<void> {
+  await connection.confirmTransaction(signature, 'confirmed');
+}
