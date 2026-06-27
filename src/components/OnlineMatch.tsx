@@ -231,7 +231,7 @@ export function OnlineMatch({
         <DialogBox speaker="SYSTEM">
           {endNote ?? "Couldn't reach the battle server. Is it running? (npm run server)"}
         </DialogBox>
-        <button className="press-start" onClick={onExit}>
+        <button className="press-start" onClick={leave}>
           ← Back
         </button>
       </div>

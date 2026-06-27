@@ -19,7 +19,15 @@ export const ESCROW_AUTHORITY_PUBKEY = authorityOverride || 'GhZtTz9ziPf2vwGBBZL
 // was too unreliable for real transactions ("failed to get recent
 // blockhash" in production). The proxy forwards to the server's own private,
 // keyed Helius endpoint, which never gets exposed to the browser bundle.
-const connection = new Connection(`${API_URL}/api/rpc`, 'confirmed');
+//
+// web3.js defaults confirmTransaction's timeout to just 30s for 'confirmed'
+// commitment — confirmed for real: a deposit landed and finalized on-chain
+// in well under that, but the client still hit "not confirmed in 30.00
+// seconds" (the extra proxy hop adds latency per poll). Extended to 90s.
+const connection = new Connection(`${API_URL}/api/rpc`, {
+  commitment: 'confirmed',
+  confirmTransactionInitialTimeout: 90_000,
+});
 
 /** Player 1 opens the match and deposits their stake. */
 export async function buildCreateMatchTx(opts: {
@@ -59,5 +67,16 @@ export async function buildJoinMatchTx(opts: {
  * Phantom's signAndSendTransaction returns as soon as it's submitted, not
  * once it's confirmed, so sending 'staked' immediately races the chain. */
 export async function confirmDeposit(signature: string): Promise<void> {
-  await connection.confirmTransaction(signature, 'confirmed');
+  try {
+    await connection.confirmTransaction(signature, 'confirmed');
+  } catch (err) {
+    // Even with a generous timeout, don't leave the user staring at "it's
+    // unknown if it succeeded" when one direct status check can just answer
+    // that — confirmTransaction's internal timeout is about how long it
+    // polled, not proof the transaction actually failed.
+    const status = await connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+    const confirmed =
+      status.value && !status.value.err && status.value.confirmationStatus !== 'processed';
+    if (!confirmed) throw err;
+  }
 }

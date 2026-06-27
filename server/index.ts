@@ -610,7 +610,14 @@ interface PendingDeposit {
   timeout: ReturnType<typeof setTimeout>;
 }
 const pendingDeposits = new Map<number, PendingDeposit>();
-const DEPOSIT_TIMEOUT_MS = 60_000;
+// Covers the WHOLE sequential flow (creator deposits fully, then the joiner
+// does), not just one side — each side can legitimately take up to ~90s to
+// confirm (see src/solana/escrow.ts's confirmTransactionInitialTimeout) plus
+// however long a human takes to actually click "approve" in their wallet.
+// 60s was too tight even for one side and caused real, confusing
+// "did my deposit even land" cancels on a deposit that had actually
+// succeeded fine, just slower than the window allowed.
+const DEPOSIT_TIMEOUT_MS = 240_000;
 
 function enqueue(
   client: Client,
