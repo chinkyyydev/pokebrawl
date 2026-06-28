@@ -19,15 +19,7 @@ export const ESCROW_AUTHORITY_PUBKEY = authorityOverride || 'GhZtTz9ziPf2vwGBBZL
 // was too unreliable for real transactions ("failed to get recent
 // blockhash" in production). The proxy forwards to the server's own private,
 // keyed Helius endpoint, which never gets exposed to the browser bundle.
-//
-// web3.js defaults confirmTransaction's timeout to just 30s for 'confirmed'
-// commitment — confirmed for real: a deposit landed and finalized on-chain
-// in well under that, but the client still hit "not confirmed in 30.00
-// seconds" (the extra proxy hop adds latency per poll). Extended to 90s.
-const connection = new Connection(`${API_URL}/api/rpc`, {
-  commitment: 'confirmed',
-  confirmTransactionInitialTimeout: 90_000,
-});
+const connection = new Connection(`${API_URL}/api/rpc`, 'confirmed');
 
 /** Player 1 opens the match and deposits their stake. */
 export async function buildCreateMatchTx(opts: {
@@ -65,18 +57,27 @@ export async function buildJoinMatchTx(opts: {
 
 /** Wait for the deposit to actually land before telling the server about it —
  * Phantom's signAndSendTransaction returns as soon as it's submitted, not
- * once it's confirmed, so sending 'staked' immediately races the chain. */
+ * once it's confirmed, so sending 'staked' immediately races the chain.
+ *
+ * Deliberately NOT connection.confirmTransaction() — it always tries a
+ * websocket subscription first and only falls back to polling once that
+ * subscription reports 'subscribed'. Our Connection only has an HTTP
+ * endpoint (the /api/rpc proxy), so web3.js derives a wss:// URL that has no
+ * real server behind it; the subscription attempt never settles, so the
+ * polling fallback never even starts, and every deposit silently ate the
+ * *entire* timeout (measured: real ~3-4 min waits for a transaction that
+ * actually finalized in a few seconds). Polling getSignatureStatus directly
+ * sidesteps that broken subscription path entirely. */
 export async function confirmDeposit(signature: string): Promise<void> {
-  try {
-    await connection.confirmTransaction(signature, 'confirmed');
-  } catch (err) {
-    // Even with a generous timeout, don't leave the user staring at "it's
-    // unknown if it succeeded" when one direct status check can just answer
-    // that — confirmTransaction's internal timeout is about how long it
-    // polled, not proof the transaction actually failed.
-    const status = await connection.getSignatureStatus(signature, { searchTransactionHistory: true });
-    const confirmed =
-      status.value && !status.value.err && status.value.confirmationStatus !== 'processed';
-    if (!confirmed) throw err;
+  const deadline = Date.now() + 60_000;
+  const pollMs = 1_500;
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+    if (value) {
+      if (value.err) throw new Error(`Deposit transaction failed: ${JSON.stringify(value.err)}`);
+      if (value.confirmationStatus === 'confirmed' || value.confirmationStatus === 'finalized') return;
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
   }
+  throw new Error('Deposit did not confirm in time — check your wallet before retrying.');
 }
